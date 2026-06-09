@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.AnnotatedString
@@ -84,6 +85,7 @@ fun BoardCanvas(
     validMoves: Set<XYLocation>,
     validAttackTargets: Set<String>,
     actedHeroes: List<String>,
+    facingLeft: Map<String, Boolean>,
     onTileTap: (row: Int, column: Int) -> Unit,
     onTileLongPress: (row: Int, column: Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -247,22 +249,44 @@ fun BoardCanvas(
                     // aspect ratio so tall sprites stay tall. Anchor the
                     // bottom of the sprite to the bottom of the cell so
                     // 16x28 humanoids poke out above their tile naturally.
-                    val scale = tileSizePx * 0.95f / bitmap.width.toFloat()
-                    val scaledW = bitmap.width  * scale
-                    val scaledH = bitmap.height * scale
+                    val spriteScale = tileSizePx * 0.95f / bitmap.width.toFloat()
+                    val scaledW = bitmap.width  * spriteScale
+                    val scaledH = bitmap.height * spriteScale
                     val cellBottom = ap.row * tileSizePx + tileSizePx
                     val left = cx - scaledW / 2f
                     val top  = cellBottom - scaledH
 
-                    drawImage(
-                        image = bitmap,
-                        srcOffset = IntOffset.Zero,
-                        srcSize = IntSize(bitmap.width, bitmap.height),
-                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
-                        dstSize = IntSize(scaledW.roundToInt(), scaledH.roundToInt()),
-                        alpha = alpha,
-                        filterQuality = FilterQuality.None,
-                    )
+                    val flipX = facingLeft[piece.name] == true
+
+                    if (flipX) {
+                        // Mirror around the sprite's own centre so it stays
+                        // in the same cell — just facing left.
+                        scale(
+                            scaleX = -1f,
+                            scaleY = 1f,
+                            pivot = Offset(cx, top + scaledH / 2f),
+                        ) {
+                            drawImage(
+                                image = bitmap,
+                                srcOffset = IntOffset.Zero,
+                                srcSize = IntSize(bitmap.width, bitmap.height),
+                                dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                                dstSize = IntSize(scaledW.roundToInt(), scaledH.roundToInt()),
+                                alpha = alpha,
+                                filterQuality = FilterQuality.None,
+                            )
+                        }
+                    } else {
+                        drawImage(
+                            image = bitmap,
+                            srcOffset = IntOffset.Zero,
+                            srcSize = IntSize(bitmap.width, bitmap.height),
+                            dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                            dstSize = IntSize(scaledW.roundToInt(), scaledH.roundToInt()),
+                            alpha = alpha,
+                            filterQuality = FilterQuality.None,
+                        )
+                    }
                 } else {
                     // Fallback for any future character class without a sprite.
                     val cy = ap.row * tileSizePx + tileSizePx / 2f

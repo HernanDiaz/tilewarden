@@ -106,6 +106,7 @@ fun GameScreen(
                     validMoves = validMoves,
                     validAttackTargets = attackTargets,
                     actedHeroes = session.actedThisRound,
+                    facingLeft = session.facingLeft,
                     onTileTap = { row, col ->
                         handleTap(session, row, col, scope)
                     },

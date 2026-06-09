@@ -7,7 +7,9 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.tilewarden.core.Dice
 import com.tilewarden.core.Game
 import com.tilewarden.core.GameEngine
@@ -96,6 +98,13 @@ class GameSession(
     /** Heroes who took a manual action this round; AI skips them in nextRound. */
     val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
+    /**
+     * Per-character facing flag. Sprites are drawn looking right by default;
+     * when a piece's last horizontal move was westwards, its entry is true
+     * and the renderer flips the sprite horizontally.
+     */
+    val facingLeft: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
+
     val log: SnapshotStateList<String> = mutableStateListOf()
 
     /** Sum of initialBody across all heroes at game start. Constant per game. */
@@ -159,6 +168,7 @@ class GameSession(
         attackingPieces.clear()
         dyingPieces.clear()
         actedThisRound.clear()
+        facingLeft.clear()
         selectedHero = null
         game = buildFreshGame()
         buffer.clear()
@@ -216,6 +226,7 @@ class GameSession(
         if (idx >= 0) {
             pieces[idx] = pieces[idx].copy(row = target.x, column = target.y)
         }
+        updateFacing(name, from.y, target.y)
 
         // Record action + spend movement
         if (name !in actedThisRound) actedThisRound.add(name)
@@ -271,6 +282,15 @@ class GameSession(
     }
 
     // ---- Internals ----
+
+    /** Update [facingLeft] based on a horizontal move from [fromY] to [toY]. */
+    private fun updateFacing(name: String, fromY: Int, toY: Int) {
+        when {
+            toY < fromY -> facingLeft[name] = true
+            toY > fromY -> facingLeft[name] = false
+            // purely vertical move — keep last facing
+        }
+    }
 
     private fun resetMovesLeft() {
         movesLeft.clear()
@@ -328,6 +348,7 @@ class GameSession(
                         column = event.to.y,
                     )
                 }
+                updateFacing(event.character.name, event.from.y, event.to.y)
             }
             is GameEvent.Attacked -> {
                 val name = event.attacker.name
