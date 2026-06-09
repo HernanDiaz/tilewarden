@@ -68,7 +68,9 @@ fun GameScreen(session: GameSession) {
             winner = session.winner,
         )
 
-        BoardPanel(boardText = session.boardText)
+        PanelCard {
+            BoardCanvas(session = session)
+        }
 
         CharactersPanel(text = session.charactersText)
 
@@ -122,18 +124,6 @@ private fun Header(
             text = subtitle,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
-        )
-    }
-}
-
-@Composable
-private fun BoardPanel(boardText: String) {
-    PanelCard {
-        Text(
-            text = boardText.ifBlank { "(empty)" },
-            fontFamily = FontFamily.Monospace,
-            fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }

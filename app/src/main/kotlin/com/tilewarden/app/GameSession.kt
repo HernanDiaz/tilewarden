@@ -61,13 +61,20 @@ class GameSession(
         }
     }
 
-    private var game: Game = buildFreshGame()
+    private var _game: Game = buildFreshGame()
+
+    /**
+     * Read-only access to the live [Game]. Callers must also read [round] (or
+     * any other observable on this session) to guarantee recomposition when
+     * the game mutates in place.
+     */
+    val game: Game get() = _game
 
     /** ASCII rendering of the board. Re-read each recomposition. */
     val boardText: String
         get() {
             tick  // touch to subscribe to invalidations
-            return game.board.toString()
+            return _game.board.toString()
         }
 
     /** Multi-line listing of all live characters with their current stats. */
@@ -118,8 +125,8 @@ class GameSession(
         log.clear()
         isOver = false
         winner = null
-        game = buildFreshGame()
-        round = game.currentRound
+        _game = buildFreshGame()
+        round = _game.currentRound
         tick++
     }
 
