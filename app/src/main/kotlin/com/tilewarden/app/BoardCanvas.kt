@@ -29,6 +29,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -48,7 +49,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private const val MOVE_ANIMATION_MS = 400
-private const val IDLE_FRAME_MS = 200L      // ~5 fps idle animation
+private const val IDLE_FRAME_MS = 200L
 private const val IDLE_FRAME_COUNT = 4
 
 private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
@@ -58,20 +59,21 @@ private val VALID_MOVE_COLOR       = Color(0x6685D67A)
 private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
 
 /**
- * 2D board with full interactivity, animated movement, attack flash,
- * death fade, valid-move/valid-attack highlights and floating damage labels.
+ * 2D board with pixel-art floor + wall perimeter, animated character
+ * sprites, tap / long-press detection and combat VFX.
  *
- * Pieces use sprites from 0x72's DungeonTilesetII (CC-BY 4.0). Each
- * character has four idle frames (`sprite_<role>_f0..f3.png`) that the
- * Canvas cycles through every [IDLE_FRAME_MS] ms so the board feels alive.
+ * The render grid is two cells wider and two cells taller than the
+ * playable area: an extra row at the top and bottom and a column on
+ * each side become a stone-wall perimeter framing the dungeon. The
+ * playable area is centred inside that frame at render offsets (1, 1).
  *
- * Sprite dimensions vary (16x16 for goblin/skelet, 16x28 for knight/dwarf).
- * The renderer preserves each sprite's aspect ratio and anchors it by the
- * BOTTOM of the cell, so tall humanoids correctly poke out above their
- * tile — matching the convention in classic pixel-art roguelikes.
+ * Floor tiles are picked from four variants using a deterministic hash
+ * of (row, column) so the same square always shows the same texture
+ * between runs and between rebuilds of the snapshot.
  *
- * Crisp pixels: [FilterQuality.None] keeps the rescale nearest-neighbour
- * (no Compose default Linear blur).
+ * All sprites are 16×16 except the humanoids (16×28); the renderer
+ * preserves each one's aspect ratio. [FilterQuality.None] keeps the
+ * nearest-neighbour scaling crisp.
  */
 @Composable
 fun BoardCanvas(
@@ -90,11 +92,7 @@ fun BoardCanvas(
     onTileLongPress: (row: Int, column: Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
-    val tileFill   = MaterialTheme.colorScheme.surface
-    val tileBorder = MaterialTheme.colorScheme.outline
-    val emptyDot   = MaterialTheme.colorScheme.surfaceVariant
     val symbolInk  = Color(0xFF1B1714)
-
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(
         fontSize = 16.sp,
@@ -102,8 +100,7 @@ fun BoardCanvas(
         fontWeight = FontWeight.Bold,
     )
 
-    // Pre-load all 16 idle frames (4 per character class).
-    // Loading is composable-scoped, the bitmaps are cached by Compose.
+    // Character idle frames (4 per class, looped at 5 fps).
     val barbarianFrames = listOf(
         ImageBitmap.imageResource(R.drawable.sprite_barbarian_f0),
         ImageBitmap.imageResource(R.drawable.sprite_barbarian_f1),
@@ -128,7 +125,6 @@ fun BoardCanvas(
         ImageBitmap.imageResource(R.drawable.sprite_mummy_f2),
         ImageBitmap.imageResource(R.drawable.sprite_mummy_f3),
     )
-
     fun framesFor(symbol: Char): List<ImageBitmap>? = when (symbol) {
         'B' -> barbarianFrames
         'D' -> dwarfFrames
@@ -137,7 +133,29 @@ fun BoardCanvas(
         else -> null
     }
 
-    // Global idle frame cycler — every piece advances in sync.
+    // Floor + wall tiles.
+    val floorTiles = listOf(
+        ImageBitmap.imageResource(R.drawable.floor_1),
+        ImageBitmap.imageResource(R.drawable.floor_2),
+        ImageBitmap.imageResource(R.drawable.floor_3),
+        ImageBitmap.imageResource(R.drawable.floor_4),
+    )
+    val wallTopLeft     = ImageBitmap.imageResource(R.drawable.wall_top_left)
+    val wallTopMid      = ImageBitmap.imageResource(R.drawable.wall_top_mid)
+    val wallTopRight    = ImageBitmap.imageResource(R.drawable.wall_top_right)
+    val wallLeft        = ImageBitmap.imageResource(R.drawable.wall_left)
+    val wallRight       = ImageBitmap.imageResource(R.drawable.wall_right)
+    val wallMid         = ImageBitmap.imageResource(R.drawable.wall_mid)
+    val wallBottomLeft  = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_left)
+    val wallBottomRight = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_right)
+
+    fun floorAt(r: Int, c: Int): ImageBitmap {
+        // Deterministic hash → stable floor per cell across recompositions.
+        val h = (r * 31 + c * 17) and Int.MAX_VALUE
+        return floorTiles[h % floorTiles.size]
+    }
+
+    // Global idle frame cycler.
     var idleFrame by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -167,76 +185,111 @@ fun BoardCanvas(
         }
     }
 
+    // Render grid = playable area + 1-cell wall perimeter on every side.
+    val renderCols = columns + 2
+    val renderRows = rows + 2
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(columns.toFloat() / rows.toFloat())
+            .aspectRatio(renderCols.toFloat() / renderRows.toFloat())
             .pointerInput(rows, columns) {
                 detectTapGestures(
                     onTap = { offset ->
-                        val tileSizePx = size.width.toFloat() / columns
-                        val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
-                        val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
-                        onTileTap(row, col)
+                        val tileSizePx = size.width.toFloat() / renderCols
+                        val rc = (offset.x / tileSizePx).toInt()
+                        val rr = (offset.y / tileSizePx).toInt()
+                        val playCol = rc - 1
+                        val playRow = rr - 1
+                        if (playRow in 0 until rows && playCol in 0 until columns) {
+                            onTileTap(playRow, playCol)
+                        }
                     },
                     onLongPress = { offset ->
-                        val tileSizePx = size.width.toFloat() / columns
-                        val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
-                        val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
-                        onTileLongPress(row, col)
+                        val tileSizePx = size.width.toFloat() / renderCols
+                        val rc = (offset.x / tileSizePx).toInt()
+                        val rr = (offset.y / tileSizePx).toInt()
+                        val playCol = rc - 1
+                        val playRow = rr - 1
+                        if (playRow in 0 until rows && playCol in 0 until columns) {
+                            onTileLongPress(playRow, playCol)
+                        }
                     },
                 )
             },
     ) {
-        val tileSize: Dp = maxWidth / columns
+        val tileSize: Dp = maxWidth / renderCols
 
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val tileSizePx = size.width / columns
+            val tileSizePx = size.width / renderCols
             val borderPx          = (tileSizePx * 0.04f).coerceAtLeast(1f)
             val attackBorderPx    = borderPx * 2.5f
             val selectionBorderPx = borderPx * 3f
             val pieceRadius       = tileSizePx * 0.36f
-            val emptyDotRadius    = tileSizePx * 0.06f
 
-            for (row in 0 until rows) {
-                for (col in 0 until columns) {
-                    val topLeft = Offset(col * tileSizePx, row * tileSizePx)
-                    val cellSize = Size(tileSizePx, tileSizePx)
-                    drawRect(color = tileFill, topLeft = topLeft, size = cellSize)
-
-                    if (XYLocation(row, col) in validMoves) {
-                        drawRect(color = VALID_MOVE_COLOR, topLeft = topLeft, size = cellSize)
-                    }
-
-                    drawRect(
-                        color = tileBorder,
-                        topLeft = topLeft,
-                        size = cellSize,
-                        style = Stroke(width = borderPx),
-                    )
-                    drawCircle(
-                        color = emptyDot,
-                        radius = emptyDotRadius,
-                        center = Offset(
-                            col * tileSizePx + tileSizePx / 2f,
-                            row * tileSizePx + tileSizePx / 2f,
-                        ),
+            // 1) Floor — every playable cell gets a floor tile based on its hash.
+            for (r in 0 until rows) {
+                for (c in 0 until columns) {
+                    drawTile(
+                        bitmap = floorAt(r, c),
+                        renderRow = r + 1,
+                        renderCol = c + 1,
+                        tileSizePx = tileSizePx,
                     )
                 }
             }
 
+            // 2) Walls — full perimeter around the playable area.
+            // Top edge.
+            for (rc in 0 until renderCols) {
+                val tile = when (rc) {
+                    0 -> wallTopLeft
+                    renderCols - 1 -> wallTopRight
+                    else -> wallTopMid
+                }
+                drawTile(tile, renderRow = 0, renderCol = rc, tileSizePx = tileSizePx)
+            }
+            // Bottom edge.
+            for (rc in 0 until renderCols) {
+                val tile = when (rc) {
+                    0 -> wallBottomLeft
+                    renderCols - 1 -> wallBottomRight
+                    else -> wallMid
+                }
+                drawTile(tile, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
+            }
+            // Left + right edges (between corners).
+            for (rr in 1 until renderRows - 1) {
+                drawTile(wallLeft,  renderRow = rr, renderCol = 0,              tileSizePx = tileSizePx)
+                drawTile(wallRight, renderRow = rr, renderCol = renderCols - 1, tileSizePx = tileSizePx)
+            }
+
+            // 3) Valid-move tints over playable floor cells.
+            for (r in 0 until rows) {
+                for (c in 0 until columns) {
+                    if (XYLocation(r, c) in validMoves) {
+                        drawRect(
+                            color = VALID_MOVE_COLOR,
+                            topLeft = Offset((c + 1) * tileSizePx, (r + 1) * tileSizePx),
+                            size = Size(tileSizePx, tileSizePx),
+                        )
+                    }
+                }
+            }
+
+            // 4) Pieces (with cell offset of +1 in both axes).
             for (ap in animatedPieces) {
                 val piece = ap.piece
                 val acted = piece.name in actedHeroes
                 val alpha = ap.alpha * (if (acted) ACTED_ALPHA else 1f)
-                val cx = ap.column * tileSizePx + tileSizePx / 2f
+                val cx = (ap.column + 1) * tileSizePx + tileSizePx / 2f
 
                 if (piece.name in validAttackTargets) {
                     drawRect(
                         color = VALID_ATTACK_COLOR,
                         topLeft = Offset(
-                            piece.column * tileSizePx,
-                            piece.row * tileSizePx,
+                            (piece.column + 1) * tileSizePx,
+                            (piece.row + 1) * tileSizePx,
                         ),
                         size = Size(tileSizePx, tileSizePx),
                     )
@@ -245,22 +298,15 @@ fun BoardCanvas(
                 val frames = framesFor(piece.symbol)
                 if (frames != null) {
                     val bitmap = frames[idleFrame]
-                    // Scale by WIDTH to fit the cell (~95%), then preserve
-                    // aspect ratio so tall sprites stay tall. Anchor the
-                    // bottom of the sprite to the bottom of the cell so
-                    // 16x28 humanoids poke out above their tile naturally.
                     val spriteScale = tileSizePx * 0.95f / bitmap.width.toFloat()
                     val scaledW = bitmap.width  * spriteScale
                     val scaledH = bitmap.height * spriteScale
-                    val cellBottom = ap.row * tileSizePx + tileSizePx
+                    val cellBottom = (ap.row + 1) * tileSizePx + tileSizePx
                     val left = cx - scaledW / 2f
                     val top  = cellBottom - scaledH
 
                     val flipX = facingLeft[piece.name] == true
-
                     if (flipX) {
-                        // Mirror around the sprite's own centre so it stays
-                        // in the same cell — just facing left.
                         scale(
                             scaleX = -1f,
                             scaleY = 1f,
@@ -288,8 +334,7 @@ fun BoardCanvas(
                         )
                     }
                 } else {
-                    // Fallback for any future character class without a sprite.
-                    val cy = ap.row * tileSizePx + tileSizePx / 2f
+                    val cy = (ap.row + 1) * tileSizePx + tileSizePx / 2f
                     drawCircle(
                         color = piece.color.copy(alpha = alpha),
                         radius = pieceRadius,
@@ -315,6 +360,7 @@ fun BoardCanvas(
                     )
                 }
 
+                // 5) Selection / attack frames around the piece's cell.
                 val isAttacking = piece.name in attackingPieces
                 val isSelected  = piece.name == selectedHero
                 if (isSelected || isAttacking) {
@@ -325,8 +371,8 @@ fun BoardCanvas(
                     drawRect(
                         color = outlineColor.copy(alpha = alpha),
                         topLeft = Offset(
-                            piece.column * tileSizePx + outlineWidth / 2f,
-                            piece.row * tileSizePx + outlineWidth / 2f,
+                            (piece.column + 1) * tileSizePx + outlineWidth / 2f,
+                            (piece.row + 1) * tileSizePx + outlineWidth / 2f,
                         ),
                         size = Size(
                             tileSizePx - outlineWidth,
@@ -338,12 +384,34 @@ fun BoardCanvas(
             }
         }
 
+        // Damage bubbles — positioned in playable coordinates, so offset
+        // by 1 cell in both axes to land on top of the right tile.
         for (bubble in damageBubbles) {
             key(bubble.id) {
                 DamageBubbleOverlay(bubble = bubble, tileSize = tileSize)
             }
         }
     }
+}
+
+/** Helper: draw a single tile-sized bitmap at (renderRow, renderCol). */
+private fun DrawScope.drawTile(
+    bitmap: ImageBitmap,
+    renderRow: Int,
+    renderCol: Int,
+    tileSizePx: Float,
+) {
+    val left = renderCol * tileSizePx
+    val top  = renderRow * tileSizePx
+    val sizeInt = tileSizePx.roundToInt()
+    drawImage(
+        image = bitmap,
+        srcOffset = IntOffset.Zero,
+        srcSize = IntSize(bitmap.width, bitmap.height),
+        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+        dstSize = IntSize(sizeInt, sizeInt),
+        filterQuality = FilterQuality.None,
+    )
 }
 
 private data class AnimatedPiece(
@@ -363,7 +431,9 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
         )
     }
     val progress = anim.value
-    val baseTopOffsetDp = tileSize * bubble.row + tileSize * 0.05f
+    // +1 offset on both axes so bubbles land in the playable area, not on
+    // the wall perimeter.
+    val baseTopOffsetDp = tileSize * (bubble.row + 1) + tileSize * 0.05f
     val rise = tileSize * 0.8f * progress
 
     Text(
@@ -375,7 +445,7 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
         modifier = Modifier
             .width(tileSize)
             .offset(
-                x = tileSize * bubble.column,
+                x = tileSize * (bubble.column + 1),
                 y = baseTopOffsetDp - rise,
             )
             .alpha(1f - progress),
