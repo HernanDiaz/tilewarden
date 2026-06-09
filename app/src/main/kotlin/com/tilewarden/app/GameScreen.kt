@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,38 +33,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tilewarden.core.Side
-import kotlinx.coroutines.delay
-
-private const val AUTO_PLAY_DELAY_MS = 600L
+import kotlinx.coroutines.launch
 
 @Composable
 fun GameScreen(session: GameSession) {
     var autoPlay by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    // ---- Subscribe to every observable on the session up front. ----
-    // Reading them HERE establishes the Compose-state subscription on the
-    // GameScreen scope, which guarantees that any tick of the engine
-    // recomposes the whole screen — and therefore recomputes the
-    // remembered snapshots below.
-    val round         = session.round
-    val isOver        = session.isOver
-    val winner        = session.winner
-    val totalRounds   = session.totalRounds
+    // Reading these on the GameScreen scope establishes Compose-state
+    // subscriptions, which guarantees recomposition when the session ticks.
+    val round       = session.round
+    val isOver      = session.isOver
+    val winner      = session.winner
+    val isAnimating = session.isAnimating
 
-    // Snapshot — re-derived only when the round advances. Its data-class
-    // equality means Compose will skip work if nothing actually changed.
-    val boardSnapshot = remember(round) { BoardSnapshot.from(session.game) }
-
-    // Auto-play coroutine: while autoPlay is true and the game isn't over,
-    // step one round every AUTO_PLAY_DELAY_MS.
-    LaunchedEffect(autoPlay, isOver) {
-        if (autoPlay && !isOver) {
-            while (autoPlay && !isOver) {
-                session.nextRound()
-                delay(AUTO_PLAY_DELAY_MS)
-            }
-            autoPlay = false
+    // Auto-play: as long as the toggle is on and the game hasn't ended,
+    // chain nextRound() calls. Each call is suspending and only returns
+    // when the round's events finish replaying, so we don't need extra
+    // delays here — the visual cadence is set by the per-event timings.
+    LaunchedEffect(autoPlay) {
+        while (autoPlay && !session.isOver) {
+            session.nextRound()
         }
+        if (session.isOver) autoPlay = false
     }
 
     Column(
@@ -75,18 +67,22 @@ fun GameScreen(session: GameSession) {
     ) {
         Header(
             round = round,
-            totalRounds = totalRounds,
-            heroesAlive = boardSnapshot.heroesAlive,
-            monstersAlive = boardSnapshot.monstersAlive,
+            totalRounds = session.totalRounds,
+            heroesAlive = session.heroesAlive,
+            monstersAlive = session.monstersAlive,
             isOver = isOver,
             winner = winner,
         )
 
         PanelCard {
-            BoardCanvas(snapshot = boardSnapshot)
+            BoardCanvas(
+                rows = session.boardRows,
+                columns = session.boardColumns,
+                pieces = session.pieces,
+            )
         }
 
-        HudPanel(pieces = boardSnapshot.pieces)
+        HudPanel(pieces = session.pieces)
 
         EventLogPanel(
             log = session.log,
@@ -96,7 +92,8 @@ fun GameScreen(session: GameSession) {
         Controls(
             autoPlay = autoPlay,
             isOver = isOver,
-            onNext = { session.nextRound() },
+            isAnimating = isAnimating,
+            onNext = { scope.launch { session.nextRound() } },
             onToggleAuto = { autoPlay = !autoPlay },
             onReset = {
                 autoPlay = false
@@ -195,6 +192,7 @@ private fun PanelCard(
 private fun Controls(
     autoPlay: Boolean,
     isOver: Boolean,
+    isAnimating: Boolean,
     onNext: () -> Unit,
     onToggleAuto: () -> Unit,
     onReset: () -> Unit,
@@ -206,7 +204,9 @@ private fun Controls(
     ) {
         Button(
             onClick = onNext,
-            enabled = !isOver && !autoPlay,
+            // Disable while the previous round's replay is still in flight,
+            // and obviously when the game is over or auto-play is running.
+            enabled = !isOver && !autoPlay && !isAnimating,
             modifier = Modifier.weight(1f),
         ) {
             Text("Next round")

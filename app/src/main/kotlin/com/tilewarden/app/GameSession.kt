@@ -6,147 +6,198 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.tilewarden.core.Dice
 import com.tilewarden.core.Game
 import com.tilewarden.core.GameEngine
 import com.tilewarden.core.GameEvent
 import com.tilewarden.core.GameObserver
-import com.tilewarden.core.Hero
-import com.tilewarden.core.Monster
 import com.tilewarden.core.Side
+import kotlinx.coroutines.delay
+
+/** Per-event animation/visibility timings used during replay (in ms). */
+private const val MOVE_MS    = 400L
+private const val ATTACK_MS  = 220L
+private const val RESOLVE_MS = 220L
+private const val BLOCK_MS   = 280L
+private const val DAMAGE_MS  = 300L
+private const val DEATH_MS   = 450L
+private const val MISC_MS    =  60L
 
 /**
- * Compose state holder that drives a single match.
+ * Compose state holder that drives a match AND replays its events
+ * one-by-one so the UI sees the action unfold piece-by-piece.
  *
- * Owns the underlying [Game], advances it one round at a time on demand,
- * and exposes everything the UI cares about as Compose-observable state
- * (`mutableStateOf`, `mutableStateListOf`).
+ * Flow per call to [nextRound]:
+ * 1. Run one full engine round, capturing every emitted [GameEvent] in
+ *    an internal buffer (the observer doesn't update the UI directly).
+ * 2. Replay the buffer with delays. Each event:
+ *      - appends a line to [log] if it has a description,
+ *      - mutates exactly the affected [PieceRender] in [pieces]
+ *        (move, lose body, or disappear on death),
+ *      - waits a duration matched to the visual effect.
+ * 3. While replaying, [isAnimating] is true and the controls are disabled.
  *
- * Lifetime: created via [rememberGameSession] inside a Composable so it
- * survives recomposition but is dropped when the parent leaves composition.
+ * The setup events emitted while [GameEngine.placeCharactersRandomly]
+ * runs are intentionally discarded — the initial board is shown directly
+ * from a snapshot of [Game.characters].
  */
 class GameSession(
     private val seed: Long,
     private val numHeroes: Int = 3,
     private val numMonsters: Int = 4,
-    private val rows: Int = 7,
-    private val columns: Int = 10,
-    private val totalRoundsCfg: Int = 20,
+    val boardRows: Int = 7,
+    val boardColumns: Int = 10,
+    val totalRounds: Int = 20,
 ) {
-    /** Current round number (1-based). Observable. */
+    /** Current round number (1-based). */
     var round: Int by mutableStateOf(1)
         private set
 
-    /** `true` after a [GameEvent.GameEnded] has been observed. */
+    /** `true` once the game has ended. */
     var isOver: Boolean by mutableStateOf(false)
         private set
 
-    /** Winner side, populated once the game ends. */
+    /** Winner side once the game ends. */
     var winner: Side? by mutableStateOf(null)
         private set
 
-    /** Single state-version counter to force recomposition on engine ticks. */
-    private var tick: Int by mutableStateOf(0)
+    /** True while a round's events are being replayed; controls should disable. */
+    var isAnimating: Boolean by mutableStateOf(false)
+        private set
 
-    /** Event log lines, mutated in place via [mutableStateListOf]. */
-    val log = mutableStateListOf<String>()
+    /** Live, observable list of characters as the UI sees them. */
+    val pieces: SnapshotStateList<PieceRender> = mutableStateListOf()
+
+    /** Append-only event log (only the lines worth showing). */
+    val log: SnapshotStateList<String> = mutableStateListOf()
+
+    val heroesAlive: Int get() = pieces.count { it.isHero }
+    val monstersAlive: Int get() = pieces.count { !it.isHero }
+
+    private val buffer: ArrayDeque<GameEvent> = ArrayDeque()
 
     private val observer = object : GameObserver {
-        override fun onEvent(event: GameEvent) {
-            log += describe(event)
-            if (event is GameEvent.GameEnded) {
-                isOver = true
-                winner = event.winner
+        override fun onEvent(event: GameEvent) { buffer.addLast(event) }
+    }
+
+    private var game: Game = buildFreshGame()
+
+    init {
+        // The placement above pushed nothing to the buffer (movePiece doesn't
+        // emit events), but clear defensively and show the starting state.
+        buffer.clear()
+        rebuildPiecesFromGame()
+        log.add("=== GAME START ===")
+    }
+
+    /** Advance one round and replay its events with delays. */
+    suspend fun nextRound() {
+        if (isOver || isAnimating) return
+        isAnimating = true
+        try {
+            buffer.clear()
+            if (!GameEngine.isOver(game)) {
+                GameEngine.resolveRound(game)
+                GameEngine.advanceRound(game)
             }
+            // The engine's runGame would publish GameEnded; we drive the loop
+            // manually, so we have to emit it ourselves.
+            if (GameEngine.isOver(game)) {
+                observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
+            }
+            replayBuffered()
+            round = game.currentRound
+        } finally {
+            isAnimating = false
         }
     }
 
-    private var _game: Game = buildFreshGame()
-
-    /**
-     * Read-only access to the live [Game]. Callers must also read [round] (or
-     * any other observable on this session) to guarantee recomposition when
-     * the game mutates in place.
-     */
-    val game: Game get() = _game
-
-    /** ASCII rendering of the board. Re-read each recomposition. */
-    val boardText: String
-        get() {
-            tick  // touch to subscribe to invalidations
-            return _game.board.toString()
-        }
-
-    /** Multi-line listing of all live characters with their current stats. */
-    val charactersText: String
-        get() {
-            tick
-            return game.characters.joinToString("\n") { it.toString() }
-        }
-
-    /** Statistics tally line. */
-    val statisticsText: String
-        get() {
-            tick
-            return game.statistics.toString()
-        }
-
-    val totalRounds: Int get() = game.totalRounds
-
-    /** Counts of live characters by side. */
-    val heroesAlive: Int
-        get() {
-            tick
-            return game.characters.count { it is Hero }
-        }
-
-    val monstersAlive: Int
-        get() {
-            tick
-            return game.characters.count { it is Monster }
-        }
-
-    /** Step the game one round forward, no-op if [isOver]. */
-    fun nextRound() {
-        if (isOver) return
-        if (GameEngine.isOver(game)) {
-            finalize()
-            return
-        }
-        GameEngine.resolveRound(game)
-        GameEngine.advanceRound(game)
-        round = game.currentRound
-        tick++
-        if (GameEngine.isOver(game)) finalize()
-    }
-
-    /** Throw away the current game and rebuild a fresh one with the same seed. */
+    /** Tear down the current game and start a fresh one with the same seed. */
     fun reset() {
+        buffer.clear()
         log.clear()
         isOver = false
         winner = null
-        _game = buildFreshGame()
-        round = _game.currentRound
-        tick++
+        game = buildFreshGame()
+        buffer.clear()
+        rebuildPiecesFromGame()
+        round = game.currentRound
+        log.add("=== GAME START ===")
     }
 
-    private fun finalize() {
-        observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
-    }
+    // ----- Internals -----
 
     private fun buildFreshGame(): Game {
         Dice.setSeed(seed)
         val g = Game(
             numHeroes = numHeroes,
             numMonsters = numMonsters,
-            boardRows = rows,
-            boardColumns = columns,
-            totalRounds = totalRoundsCfg,
+            boardRows = boardRows,
+            boardColumns = boardColumns,
+            totalRounds = totalRounds,
             observer = observer,
         )
         GameEngine.placeCharactersRandomly(g)
-        observer.onEvent(GameEvent.GameStarted(g))
         return g
+    }
+
+    private fun rebuildPiecesFromGame() {
+        pieces.clear()
+        for (c in game.characters) {
+            renderOf(c)?.let { pieces.add(it) }
+        }
+    }
+
+    private suspend fun replayBuffered() {
+        while (buffer.isNotEmpty()) {
+            val event = buffer.removeFirst()
+            describe(event).takeIf { it.isNotEmpty() }?.let { log.add(it) }
+            applyEventToPieces(event)
+            delay(durationFor(event))
+        }
+    }
+
+    /** Mutate the [pieces] list in place to reflect a single event. */
+    private fun applyEventToPieces(event: GameEvent) {
+        when (event) {
+            is GameEvent.PieceMoved -> {
+                val idx = pieces.indexOfFirst { it.name == event.character.name }
+                if (idx >= 0) {
+                    pieces[idx] = pieces[idx].copy(
+                        row = event.to.x,
+                        column = event.to.y,
+                    )
+                }
+            }
+            is GameEvent.Damaged -> {
+                val idx = pieces.indexOfFirst { it.name == event.character.name }
+                if (idx >= 0) {
+                    val cur = pieces[idx]
+                    pieces[idx] = cur.copy(
+                        body = (cur.body - event.wounds).coerceAtLeast(0),
+                    )
+                }
+            }
+            is GameEvent.Died -> {
+                pieces.removeAll { it.name == event.character.name }
+            }
+            is GameEvent.GameEnded -> {
+                isOver = true
+                winner = event.winner
+            }
+            else -> { /* nothing visual */ }
+        }
+    }
+
+    private fun durationFor(event: GameEvent): Long = when (event) {
+        is GameEvent.PieceMoved     -> MOVE_MS
+        is GameEvent.Attacked       -> ATTACK_MS
+        is GameEvent.AttackResolved -> RESOLVE_MS
+        is GameEvent.AttackBlocked  -> BLOCK_MS
+        is GameEvent.Damaged        -> DAMAGE_MS
+        is GameEvent.Died           -> DEATH_MS
+        else                        -> MISC_MS
     }
 
     private fun describe(event: GameEvent): String = when (event) {
@@ -165,7 +216,7 @@ class GameSession(
         is GameEvent.Damaged        -> "  ${event.character.name} takes ${event.wounds} wound(s)"
         is GameEvent.Died           -> "  ${event.character.name} DIES"
         is GameEvent.GameEnded      -> "=== GAME END — winner: ${event.winner} ==="
-    }.also { /* keep when() exhaustive */ }
+    }
 }
 
 /** Composable factory: one [GameSession] per (seed) per parent composition. */

@@ -25,17 +25,22 @@ import androidx.compose.ui.unit.sp
 private const val MOVE_ANIMATION_MS = 400
 
 /**
- * 2D rendering of a [BoardSnapshot] with animated piece movement.
+ * 2D rendering of the board.
  *
- * Each piece's (column, row) is tracked through Compose's `animateFloatAsState`,
- * so when the snapshot updates with a new position the disc slides smoothly
- * to its destination over [MOVE_ANIMATION_MS] ms instead of teleporting.
- * The `key(piece.name)` wrapper gives each piece a stable identity in the
- * slot table even when other pieces around it disappear (deaths).
+ * Receives the board dimensions and the live list of [PieceRender]s and
+ * draws everything from those parameters. Each piece's (column, row) is
+ * tracked through `animateFloatAsState`, so when a single piece's position
+ * is updated in the list its disc slides smoothly; other pieces sit still.
+ *
+ * The `key(piece.name)` wrapper guarantees each piece keeps a stable
+ * animation slot in the Compose slot table even when peers around it are
+ * removed (deaths).
  */
 @Composable
 fun BoardCanvas(
-    snapshot: BoardSnapshot,
+    rows: Int,
+    columns: Int,
+    pieces: List<PieceRender>,
     modifier: Modifier = Modifier,
 ) {
     val tileFill   = MaterialTheme.colorScheme.surface
@@ -50,10 +55,8 @@ fun BoardCanvas(
         fontWeight = FontWeight.Bold,
     )
 
-    // Per-piece animated coordinates. The `key(piece.name)` ensures each piece
-    // gets its own animation state slot regardless of list reorderings.
     val animatedCoords: List<Triple<PieceRender, Float, Float>> =
-        snapshot.pieces.map { piece ->
+        pieces.map { piece ->
             key(piece.name) {
                 val animatedColumn by animateFloatAsState(
                     targetValue = piece.column.toFloat(),
@@ -72,18 +75,15 @@ fun BoardCanvas(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(snapshot.columns.toFloat() / snapshot.rows.toFloat()),
+            .aspectRatio(columns.toFloat() / rows.toFloat()),
     ) {
-        val cols = snapshot.columns
-        val rows = snapshot.rows
-        val tileSize = size.width / cols
+        val tileSize = size.width / columns
         val borderPx = (tileSize * 0.04f).coerceAtLeast(1f)
         val pieceRadius = tileSize * 0.36f
         val emptyDotRadius = tileSize * 0.06f
 
-        // Grid background — empty squares first, so pieces sit on top.
         for (row in 0 until rows) {
-            for (col in 0 until cols) {
+            for (col in 0 until columns) {
                 val topLeft = Offset(col * tileSize, row * tileSize)
                 val cellSize = Size(tileSize, tileSize)
                 drawRect(color = tileFill, topLeft = topLeft, size = cellSize)
@@ -104,7 +104,6 @@ fun BoardCanvas(
             }
         }
 
-        // Pieces — using the animated (column, row) so motion is smooth.
         for ((piece, animCol, animRow) in animatedCoords) {
             val cx = animCol * tileSize + tileSize / 2f
             val cy = animRow * tileSize + tileSize / 2f
