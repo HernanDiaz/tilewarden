@@ -75,25 +75,33 @@ fun GameScreen(
         }
     }
 
-    // Auto-advance once every alive hero has fully spent their turn. Manual
-    // play turns into something like: tap heroes, move them, see the AI
-    // round resolve, repeat.
+    // Auto-advance the round when:
+    //  1) every alive hero has been touched at least once this round (moved
+    //     or attacked — purely selecting and deselecting doesn't count), AND
+    //  2) the player isn't currently planning a move (no hero selected).
+    //
+    // Using touchedThisRound (instead of actedThisRound) means the player
+    // doesn't have to spend every single step of every hero — moving once
+    // is enough. The selectedHero == null guard prevents firing while the
+    // player is mid-decision with a hero still highlighted.
     //
     // nextRound() is dispatched into `scope` (the screen-level coroutine
     // scope), NOT awaited inside the LaunchedEffect. If we awaited it here
     // the effect would cancel mid-call as soon as nextRound mutated any of
     // the keys, interrupting resolveRound + replayBuffered halfway through.
     LaunchedEffect(
-        session.actedThisRound.size,
+        session.touchedThisRound.size,
+        session.selectedHero,
         session.pieces.size,
         session.isOver,
     ) {
         if (session.isAnimating || session.isOver) return@LaunchedEffect
+        if (session.selectedHero != null) return@LaunchedEffect
         val aliveHeroes = session.pieces.filter { it.isHero }
         if (aliveHeroes.isEmpty()) return@LaunchedEffect
-        if (aliveHeroes.all { it.name in session.actedThisRound }) {
+        if (aliveHeroes.all { it.name in session.touchedThisRound }) {
             delay(600)
-            if (!session.isAnimating && !session.isOver) {
+            if (!session.isAnimating && !session.isOver && session.selectedHero == null) {
                 scope.launch { session.nextRound() }
             }
         }
