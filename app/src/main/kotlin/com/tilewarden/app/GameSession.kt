@@ -393,9 +393,14 @@ class GameSession(
     }
 
     private fun CoroutineScope.applyEventToPieces(event: GameEvent) {
+        // Game-state mutations happen first; audio is played LAST so that
+        // even a catastrophic audio failure can never block a piece's
+        // body / position from updating. The audio call is also wrapped in
+        // an extra try/catch on top of the one inside AudioEngine.play(),
+        // so absolutely nothing the audio subsystem does can throw out of
+        // this function.
         when (event) {
             is GameEvent.PieceMoved -> {
-                audio?.play(SoundId.STEP)
                 val idx = pieces.indexOfFirst { it.name == event.character.name }
                 if (idx >= 0) {
                     pieces[idx] = pieces[idx].copy(
@@ -404,9 +409,9 @@ class GameSession(
                     )
                 }
                 updateFacing(event.character.name, event.from.y, event.to.y)
+                safePlay(SoundId.STEP)
             }
             is GameEvent.Attacked -> {
-                audio?.play(SoundId.ATTACK_SWING)
                 val name = event.attacker.name
                 lastAttackerName = name
                 attacksByName[name] = (attacksByName[name] ?: 0) + 1
@@ -415,12 +420,12 @@ class GameSession(
                     delay(ATTACK_FLASH_MS)
                     attackingPieces.remove(name)
                 }
+                safePlay(SoundId.ATTACK_SWING)
             }
             is GameEvent.AttackBlocked -> {
-                audio?.play(SoundId.BLOCK)
+                safePlay(SoundId.BLOCK)
             }
             is GameEvent.Damaged -> {
-                audio?.play(SoundId.HIT)
                 lastAttackerName?.let { attacker ->
                     damageByName[attacker] = (damageByName[attacker] ?: 0) + event.wounds
                 }
@@ -442,9 +447,9 @@ class GameSession(
                         damageBubbles.remove(bubble)
                     }
                 }
+                safePlay(SoundId.HIT)
             }
             is GameEvent.Died -> {
-                audio?.play(SoundId.DEATH)
                 val name = event.character.name
                 if (name !in dyingPieces) dyingPieces.add(name)
                 launch {
@@ -452,16 +457,25 @@ class GameSession(
                     pieces.removeAll { it.name == name }
                     dyingPieces.remove(name)
                 }
+                safePlay(SoundId.DEATH)
             }
             is GameEvent.GameEnded -> {
-                audio?.play(
+                isOver = true
+                winner = event.winner
+                safePlay(
                     if (event.winner == Side.HEROES) SoundId.VICTORY
                     else                              SoundId.DEFEAT,
                 )
-                isOver = true
-                winner = event.winner
             }
             else -> { }
+        }
+    }
+
+    /** Play a SFX with an extra try/catch on top of [AudioEngine.play]'s own,
+     *  so a freak audio crash absolutely cannot propagate up the replay loop. */
+    private fun safePlay(id: SoundId) {
+        try { audio?.play(id) } catch (t: Throwable) {
+            android.util.Log.w("Tilewarden", "audio.play($id) threw", t)
         }
     }
 
