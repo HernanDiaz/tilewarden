@@ -185,10 +185,9 @@ fun BoardCanvas(
     }
 
     // Render grid: same width as the playable area (no left/right walls).
-    // Both horizontal walls are 2 rows tall and bracketed by a remate
-    // strip on their OUTER side: above the top wall and below the bottom
-    // wall. The bottom remate is the same wall_top_mid sprite flipped
-    // vertically so the dark line sits at the bottom of the tile.
+    // Both horizontal walls are 2 rows tall with a wall_top_mid remate
+    // strip on TOP of a wall_mid brick body. The remate's dark line sits
+    // at the top of every wall, matching the sprite's own orientation.
     val renderCols = columns
     val renderRows = rows + 4
     val playRowOffset = 2  // top wall = 2 rows
@@ -246,40 +245,22 @@ fun BoardCanvas(
 
             // 2) Horizontal walls only — nothing to the left or right.
             //
-            // Top wall:    2 tiles tall, wall_top_mid (remate, dark line
-            //              UP) above wall_mid (brick body).
-            // Bottom wall: 2 tiles tall, wall_mid above wall_top_mid
-            //              FLIPPED vertically — the dark line ends up
-            //              at the bottom of the tile, marking the
-            //              outer edge of the bottom wall.
+            // Both walls are 2 tiles tall: wall_top_mid (remate strip,
+            // dark line at the top of the tile) above wall_mid (brick
+            // body). The bottom wall's remate sits ON TOP of its body,
+            // mirroring the top wall — its dark line marks where the
+            // bottom wall begins, right under the floor.
             //
-            // Row 0:        wall_top_mid x cols       (top remate)
-            // Row 1:        wall_mid     x cols       (top body)
+            // Row 0:        wall_top_mid x cols   (top remate)
+            // Row 1:        wall_mid     x cols   (top body)
             // Rows 2..N+1:  playable floor
-            // Row N+2:      wall_mid     x cols       (bottom body)
-            // Row N+3:      wall_top_mid flipped Y    (bottom remate)
+            // Row N+2:      wall_top_mid x cols   (bottom remate)
+            // Row N+3:      wall_mid     x cols   (bottom body)
             for (rc in 0 until renderCols) {
                 drawTile(wallTopMid, renderRow = 0,              renderCol = rc, tileSizePx = tileSizePx)
                 drawTile(wallMid,    renderRow = 1,              renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallMid,    renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
-                // Bottom remate: same sprite, mirrored vertically.
-                val left = rc * tileSizePx
-                val top  = (renderRows - 1) * tileSizePx
-                val s    = tileSizePx
-                scale(
-                    scaleX = 1f,
-                    scaleY = -1f,
-                    pivot = Offset(left + s / 2f, top + s / 2f),
-                ) {
-                    drawImage(
-                        image = wallTopMid,
-                        srcOffset = IntOffset.Zero,
-                        srcSize = IntSize(wallTopMid.width, wallTopMid.height),
-                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
-                        dstSize = IntSize(s.roundToInt(), s.roundToInt()),
-                        filterQuality = FilterQuality.None,
-                    )
-                }
+                drawTile(wallTopMid, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallMid,    renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
 
             // 3) Valid-move tints over playable floor cells.
