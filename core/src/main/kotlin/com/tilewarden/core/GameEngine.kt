@@ -96,9 +96,16 @@ object GameEngine {
         game.notify(GameEvent.RoundEnded(game.currentRound))
     }
 
-    private fun advanceRound(game: Game) {
+    /** Move [game] to the next round. Useful when driving the loop manually. */
+    fun advanceRound(game: Game) {
         game.currentRound++
     }
+
+    /**
+     * `true` once the game cannot continue: round budget exhausted, or one
+     * side wiped out. The mirror of the internal loop condition.
+     */
+    fun isOver(game: Game): Boolean = !notEndOfGame(game)
 
     private fun notEndOfGame(game: Game): Boolean =
         game.currentRound <= game.totalRounds && opponentsLeft(game)
