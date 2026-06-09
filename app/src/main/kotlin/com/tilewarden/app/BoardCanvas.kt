@@ -277,21 +277,23 @@ fun BoardCanvas(
                 drawTile(wallLeft,  renderRow = rr, renderCol = 0,              tileSizePx = tileSizePx)
                 drawTile(wallRight, renderRow = rr, renderCol = renderCols - 1, tileSizePx = tileSizePx)
             }
-            // Bottom brick body (row renderRows - 2)
-            for (rc in 0 until renderCols) {
-                val tile = when (rc) {
-                    0              -> wallLeft
-                    renderCols - 1 -> wallRight
-                    else           -> wallMid
-                }
-                drawTile(tile, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
-            }
-            // Bottom remate (last row)
+            // Bottom remate (row renderRows - 2): the dark strip belongs at
+            // the TOP of every wall — for the lower wall that means the
+            // penultimate row, not the final one.
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
                     0              -> wallBottomLeft
                     renderCols - 1 -> wallBottomRight
                     else           -> wallTopMid
+                }
+                drawTile(tile, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
+            }
+            // Bottom brick body (last row)
+            for (rc in 0 until renderCols) {
+                val tile = when (rc) {
+                    0              -> wallLeft
+                    renderCols - 1 -> wallRight
+                    else           -> wallMid
                 }
                 drawTile(tile, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
