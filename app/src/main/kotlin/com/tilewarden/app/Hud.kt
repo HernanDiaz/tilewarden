@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -32,14 +33,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Visual HUD: one row per live character, with a coloured disc echoing the
- * board piece, a name, a coloured health bar, and the numeric "current/max".
+ * Visual HUD: one row per live character, with a team-coloured halo disc,
+ * a name, an animated health bar, and the numeric "current/max" body.
  *
- * Replaces the old monospace dump of [com.tilewarden.core.Character.toString].
+ * Heroes that have already taken their turn this round render at
+ * [ACTED_ALPHA] opacity so the player sees at a glance who's still
+ * available.
  */
 @Composable
 fun HudPanel(
     pieces: List<PieceRender>,
+    actedHeroes: List<String>,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -56,25 +60,26 @@ fun HudPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            // Heroes first, monsters after — readable for the player.
             val heroes = pieces.filter { it.isHero }
             val monsters = pieces.filter { !it.isHero }
-            for (p in heroes) CharacterRow(piece = p)
+            for (p in heroes)  CharacterRow(piece = p, acted = p.name in actedHeroes)
             if (heroes.isNotEmpty() && monsters.isNotEmpty()) {
                 Spacer(Modifier.height(2.dp))
             }
-            for (p in monsters) CharacterRow(piece = p)
+            for (p in monsters) CharacterRow(piece = p, acted = false)
         }
     }
 }
 
 @Composable
-private fun CharacterRow(piece: PieceRender) {
+private fun CharacterRow(piece: PieceRender, acted: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (acted) ACTED_ALPHA else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SymbolDisc(symbol = piece.symbol, color = piece.color)
+        SymbolDisc(symbol = piece.symbol, color = piece.color, isHero = piece.isHero)
 
         Spacer(Modifier.width(10.dp))
 
@@ -100,40 +105,47 @@ private fun CharacterRow(piece: PieceRender) {
     }
 }
 
+/** Team halo around a piece's subclass-coloured disc. */
 @Composable
-private fun SymbolDisc(symbol: Char, color: Color) {
+private fun SymbolDisc(symbol: Char, color: Color, isHero: Boolean) {
     val ink = Color(0xFF1B1714)
     Box(
         modifier = Modifier
             .size(28.dp)
             .clip(CircleShape)
-            .background(color)
-            .border(width = 1.dp, color = ink, shape = CircleShape),
+            .background(teamColor(isHero)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = symbol.toString(),
-            color = ink,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-        )
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(color)
+                .border(width = 0.5.dp, color = ink, shape = CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = symbol.toString(),
+                color = ink,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+            )
+        }
     }
 }
 
 @Composable
 private fun HealthBar(ratio: Float) {
-    // Width animates smoothly when wounds are taken, instead of jumping.
     val animatedRatio by animateFloatAsState(
         targetValue = ratio,
         animationSpec = tween(durationMillis = 400),
         label = "health_ratio",
     )
-    // Colour also cross-fades through the green -> amber -> red ramp.
     val targetColor = when {
-        ratio > 0.66f -> Color(0xFF7AA84A)  // green: healthy
-        ratio > 0.33f -> Color(0xFFE0B355)  // amber: hurt
-        ratio > 0f    -> Color(0xFFC0524A)  // red: critical
-        else          -> Color(0xFF6E2E2A)  // dark red: empty
+        ratio > 0.66f -> Color(0xFF7AA84A)
+        ratio > 0.33f -> Color(0xFFE0B355)
+        ratio > 0f    -> Color(0xFFC0524A)
+        else          -> Color(0xFF6E2E2A)
     }
     val animatedColor by animateColorAsState(
         targetValue = targetColor,
@@ -157,4 +169,3 @@ private fun HealthBar(ratio: Float) {
         )
     }
 }
-

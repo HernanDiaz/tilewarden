@@ -84,13 +84,17 @@ fun GameScreen(session: GameSession) {
                 selectedHero = selectedHero,
                 validMoves = validMoves,
                 validAttackTargets = attackTargets,
+                actedHeroes = session.actedThisRound,
                 onTileTap = { row, col ->
                     handleTap(session, row, col, scope)
                 },
             )
         }
 
-        HudPanel(pieces = session.pieces)
+        HudPanel(
+            pieces = session.pieces,
+            actedHeroes = session.actedThisRound,
+        )
 
         EventLogPanel(
             log = session.log,

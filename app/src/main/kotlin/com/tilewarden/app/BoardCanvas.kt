@@ -38,16 +38,17 @@ import androidx.compose.ui.unit.sp
 import com.tilewarden.core.XYLocation
 
 private const val MOVE_ANIMATION_MS = 400
-private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
+private val ATTACK_BORDER_COLOR    = Color(0xFFFF8C30)   // warm orange (was red; clashed with team)
 private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE04A4A)
 private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)   // gold
-private val VALID_MOVE_COLOR       = Color(0x6685D67A)   // semi-transparent green
-private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)   // semi-transparent orange
+private val VALID_MOVE_COLOR       = Color(0x6685D67A)
+private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
 
 /**
  * 2D board with full interactivity: tap detection, selection highlight,
- * valid-move and valid-attack overlays, plus the VFX from milestone 4
- * (movement slide, attack flash, death fade, floating damage labels).
+ * valid-move and valid-attack overlays, team halos, "already acted"
+ * fading, plus the VFX from milestone 4 (movement slide, attack flash,
+ * death fade, floating damage labels).
  */
 @Composable
 fun BoardCanvas(
@@ -60,6 +61,7 @@ fun BoardCanvas(
     selectedHero: String?,
     validMoves: Set<XYLocation>,
     validAttackTargets: Set<String>,
+    actedHeroes: List<String>,
     onTileTap: (row: Int, column: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -87,13 +89,12 @@ fun BoardCanvas(
                 animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
                 label = "row_${piece.name}",
             )
-            val targetAlpha = if (piece.name in dyingPieces) 0f else 1f
-            val animAlpha by animateFloatAsState(
-                targetValue = targetAlpha,
+            val deathAlpha by animateFloatAsState(
+                targetValue = if (piece.name in dyingPieces) 0f else 1f,
                 animationSpec = tween(DEATH_FADE_MS),
                 label = "alpha_${piece.name}",
             )
-            AnimatedPiece(piece, animCol, animRow, animAlpha)
+            AnimatedPiece(piece, animCol, animRow, deathAlpha)
         }
     }
 
@@ -114,20 +115,20 @@ fun BoardCanvas(
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val tileSizePx = size.width / columns
-            val borderPx = (tileSizePx * 0.04f).coerceAtLeast(1f)
-            val attackBorderPx = borderPx * 2.5f
+            val borderPx          = (tileSizePx * 0.04f).coerceAtLeast(1f)
+            val attackBorderPx    = borderPx * 2.5f
             val selectionBorderPx = borderPx * 3f
-            val pieceRadius = tileSizePx * 0.36f
-            val emptyDotRadius = tileSizePx * 0.06f
+            val pieceRadius       = tileSizePx * 0.34f
+            val haloRadius        = tileSizePx * 0.42f      // outer team ring
+            val emptyDotRadius    = tileSizePx * 0.06f
 
-            // Grid + highlights.
+            // Grid + valid-move highlights.
             for (row in 0 until rows) {
                 for (col in 0 until columns) {
                     val topLeft = Offset(col * tileSizePx, row * tileSizePx)
                     val cellSize = Size(tileSizePx, tileSizePx)
                     drawRect(color = tileFill, topLeft = topLeft, size = cellSize)
 
-                    // Valid-move tint: paint the whole cell in green.
                     if (XYLocation(row, col) in validMoves) {
                         drawRect(color = VALID_MOVE_COLOR, topLeft = topLeft, size = cellSize)
                     }
@@ -152,12 +153,12 @@ fun BoardCanvas(
             // Pieces.
             for (ap in animatedPieces) {
                 val piece = ap.piece
-                val alpha = ap.alpha
+                val acted = piece.name in actedHeroes
+                val alpha = ap.alpha * (if (acted) ACTED_ALPHA else 1f)
                 val cx = ap.column * tileSizePx + tileSizePx / 2f
                 val cy = ap.row    * tileSizePx + tileSizePx / 2f
 
-                // Background tint for attackable enemies (uses LOGICAL position,
-                // not animated, so the tint stays put under the disc).
+                // Valid-attack tint behind the disc.
                 if (piece.name in validAttackTargets) {
                     drawRect(
                         color = VALID_ATTACK_COLOR,
@@ -169,6 +170,14 @@ fun BoardCanvas(
                     )
                 }
 
+                // Team halo: a slightly larger filled circle behind the piece disc.
+                drawCircle(
+                    color = teamColor(piece.isHero).copy(alpha = alpha),
+                    radius = haloRadius,
+                    center = Offset(cx, cy),
+                )
+
+                // Piece disc (subclass-coloured).
                 drawCircle(
                     color = piece.color.copy(alpha = alpha),
                     radius = pieceRadius,
