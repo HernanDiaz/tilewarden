@@ -116,6 +116,13 @@ Derived from a Java OOP teaching project (Universidad de Valladolid, course
 and renamed; no original art, names, or rules from any commercial board game
 are used.
 
+## Art credits
+
+Character sprites in `app/src/main/res/drawable-nodpi/` are from
+[0x72's DungeonTilesetII v1.7](https://0x72.itch.io/dungeontileset-ii)
+by Robert (0x72), distributed under [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Four idle-animation frames per character are bundled (`sprite_<role>_f0..f3.png`).
+
 ## License
 
 TBD.

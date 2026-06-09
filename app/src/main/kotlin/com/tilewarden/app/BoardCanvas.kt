@@ -19,7 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
@@ -41,28 +43,34 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.tilewarden.core.XYLocation
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private const val MOVE_ANIMATION_MS = 400
+private const val IDLE_FRAME_MS = 200L      // ~5 fps idle animation
+private const val IDLE_FRAME_COUNT = 4
+
 private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
 private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE04A4A)
-private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)   // gold
+private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)
 private val VALID_MOVE_COLOR       = Color(0x6685D67A)
 private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
 
 /**
- * 2D board with full interactivity: tap detection, selection highlight,
- * valid-move and valid-attack overlays, "already acted" fading, plus the
- * VFX from milestone 4 (movement slide, attack flash, death fade,
- * floating damage labels).
+ * 2D board with full interactivity, animated movement, attack flash,
+ * death fade, valid-move/valid-attack highlights and floating damage labels.
  *
- * Pieces are drawn from Kenney's Tiny Dungeon pack (CC0). Each character
- * symbol maps to a specific tile in res/drawable-nodpi; if a new symbol
- * is introduced without a sprite mapping, the renderer falls back to a
- * coloured disc with the letter inside.
+ * Pieces use sprites from 0x72's DungeonTilesetII (CC-BY 4.0). Each
+ * character has four idle frames (`sprite_<role>_f0..f3.png`) that the
+ * Canvas cycles through every [IDLE_FRAME_MS] ms so the board feels alive.
  *
- * Sprites are 16x16 px raster. They're drawn with [FilterQuality.None]
- * so scaling stays nearest-neighbour (crisp pixels, no antialiasing).
+ * Sprite dimensions vary (16x16 for goblin/skelet, 16x28 for knight/dwarf).
+ * The renderer preserves each sprite's aspect ratio and anchors it by the
+ * BOTTOM of the cell, so tall humanoids correctly poke out above their
+ * tile — matching the convention in classic pixel-art roguelikes.
+ *
+ * Crisp pixels: [FilterQuality.None] keeps the rescale nearest-neighbour
+ * (no Compose default Linear blur).
  */
 @Composable
 fun BoardCanvas(
@@ -92,19 +100,48 @@ fun BoardCanvas(
         fontWeight = FontWeight.Bold,
     )
 
-    // Sprite mappings (tiles from Kenney Tiny Dungeon, CC0).
-    // To swap a character's sprite, change the R.drawable.tile_XXXX here.
-    val barbarianBitmap = ImageBitmap.imageResource(R.drawable.tile_0097)  // red-armoured knight
-    val dwarfBitmap     = ImageBitmap.imageResource(R.drawable.tile_0089)  // stocky humanoid
-    val goblinBitmap    = ImageBitmap.imageResource(R.drawable.tile_0108)  // small green creature
-    val mummyBitmap     = ImageBitmap.imageResource(R.drawable.tile_0116)  // light wrapped figure
+    // Pre-load all 16 idle frames (4 per character class).
+    // Loading is composable-scoped, the bitmaps are cached by Compose.
+    val barbarianFrames = listOf(
+        ImageBitmap.imageResource(R.drawable.sprite_barbarian_f0),
+        ImageBitmap.imageResource(R.drawable.sprite_barbarian_f1),
+        ImageBitmap.imageResource(R.drawable.sprite_barbarian_f2),
+        ImageBitmap.imageResource(R.drawable.sprite_barbarian_f3),
+    )
+    val dwarfFrames = listOf(
+        ImageBitmap.imageResource(R.drawable.sprite_dwarf_f0),
+        ImageBitmap.imageResource(R.drawable.sprite_dwarf_f1),
+        ImageBitmap.imageResource(R.drawable.sprite_dwarf_f2),
+        ImageBitmap.imageResource(R.drawable.sprite_dwarf_f3),
+    )
+    val goblinFrames = listOf(
+        ImageBitmap.imageResource(R.drawable.sprite_goblin_f0),
+        ImageBitmap.imageResource(R.drawable.sprite_goblin_f1),
+        ImageBitmap.imageResource(R.drawable.sprite_goblin_f2),
+        ImageBitmap.imageResource(R.drawable.sprite_goblin_f3),
+    )
+    val mummyFrames = listOf(
+        ImageBitmap.imageResource(R.drawable.sprite_mummy_f0),
+        ImageBitmap.imageResource(R.drawable.sprite_mummy_f1),
+        ImageBitmap.imageResource(R.drawable.sprite_mummy_f2),
+        ImageBitmap.imageResource(R.drawable.sprite_mummy_f3),
+    )
 
-    fun bitmapFor(symbol: Char): ImageBitmap? = when (symbol) {
-        'B' -> barbarianBitmap
-        'D' -> dwarfBitmap
-        'G' -> goblinBitmap
-        'M' -> mummyBitmap
+    fun framesFor(symbol: Char): List<ImageBitmap>? = when (symbol) {
+        'B' -> barbarianFrames
+        'D' -> dwarfFrames
+        'G' -> goblinFrames
+        'M' -> mummyFrames
         else -> null
+    }
+
+    // Global idle frame cycler — every piece advances in sync.
+    var idleFrame by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(IDLE_FRAME_MS)
+            idleFrame = (idleFrame + 1) % IDLE_FRAME_COUNT
+        }
     }
 
     val animatedPieces: List<AnimatedPiece> = pieces.map { piece ->
@@ -158,9 +195,7 @@ fun BoardCanvas(
             val selectionBorderPx = borderPx * 3f
             val pieceRadius       = tileSizePx * 0.36f
             val emptyDotRadius    = tileSizePx * 0.06f
-            val spriteSize        = tileSizePx * 0.85f
 
-            // Grid + valid-move highlights.
             for (row in 0 until rows) {
                 for (col in 0 until columns) {
                     val topLeft = Offset(col * tileSizePx, row * tileSizePx)
@@ -188,13 +223,11 @@ fun BoardCanvas(
                 }
             }
 
-            // Pieces.
             for (ap in animatedPieces) {
                 val piece = ap.piece
                 val acted = piece.name in actedHeroes
                 val alpha = ap.alpha * (if (acted) ACTED_ALPHA else 1f)
                 val cx = ap.column * tileSizePx + tileSizePx / 2f
-                val cy = ap.row    * tileSizePx + tileSizePx / 2f
 
                 if (piece.name in validAttackTargets) {
                     drawRect(
@@ -207,24 +240,32 @@ fun BoardCanvas(
                     )
                 }
 
-                val bitmap = bitmapFor(piece.symbol)
-                if (bitmap != null) {
-                    // Nearest-neighbour scaling so pixel art stays crisp.
-                    val dstSizeInt = spriteSize.roundToInt()
+                val frames = framesFor(piece.symbol)
+                if (frames != null) {
+                    val bitmap = frames[idleFrame]
+                    // Scale by WIDTH to fit the cell (~95%), then preserve
+                    // aspect ratio so tall sprites stay tall. Anchor the
+                    // bottom of the sprite to the bottom of the cell so
+                    // 16x28 humanoids poke out above their tile naturally.
+                    val scale = tileSizePx * 0.95f / bitmap.width.toFloat()
+                    val scaledW = bitmap.width  * scale
+                    val scaledH = bitmap.height * scale
+                    val cellBottom = ap.row * tileSizePx + tileSizePx
+                    val left = cx - scaledW / 2f
+                    val top  = cellBottom - scaledH
+
                     drawImage(
                         image = bitmap,
                         srcOffset = IntOffset.Zero,
                         srcSize = IntSize(bitmap.width, bitmap.height),
-                        dstOffset = IntOffset(
-                            (cx - spriteSize / 2f).roundToInt(),
-                            (cy - spriteSize / 2f).roundToInt(),
-                        ),
-                        dstSize = IntSize(dstSizeInt, dstSizeInt),
+                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                        dstSize = IntSize(scaledW.roundToInt(), scaledH.roundToInt()),
                         alpha = alpha,
                         filterQuality = FilterQuality.None,
                     )
                 } else {
                     // Fallback for any future character class without a sprite.
+                    val cy = ap.row * tileSizePx + tileSizePx / 2f
                     drawCircle(
                         color = piece.color.copy(alpha = alpha),
                         radius = pieceRadius,
@@ -250,7 +291,6 @@ fun BoardCanvas(
                     )
                 }
 
-                // Selection / attack frame: rect around the tile.
                 val isAttacking = piece.name in attackingPieces
                 val isSelected  = piece.name == selectedHero
                 if (isSelected || isAttacking) {
