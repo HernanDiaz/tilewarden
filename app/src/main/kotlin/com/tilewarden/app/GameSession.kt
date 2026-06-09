@@ -98,6 +98,23 @@ class GameSession(
     /** Heroes who took a manual action this round; AI skips them in nextRound. */
     val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
+    /** Initial snapshot of every character that started the game.
+     * Used by the end-of-game summary to compute the MVP even after death. */
+    val initialPieces: SnapshotStateList<PieceRender> = mutableStateListOf()
+
+    /** Per-character total attack count across the whole game. */
+    val attacksByName: SnapshotStateMap<String, Int> = mutableStateMapOf()
+
+    /** Per-character total damage dealt across the whole game. */
+    val damageByName: SnapshotStateMap<String, Int> = mutableStateMapOf()
+
+    /** Most recent attacker — used to attribute the next Damaged event. */
+    private var lastAttackerName: String? = null
+
+    /** Read-only view of the engine's running tally for the current match. */
+    val statistics: com.tilewarden.core.Statistics
+        get() = game.statistics
+
     /**
      * Per-character facing flag. Sprites are drawn looking right by default;
      * when a piece's last horizontal move was westwards, its entry is true
@@ -169,6 +186,9 @@ class GameSession(
         dyingPieces.clear()
         actedThisRound.clear()
         facingLeft.clear()
+        attacksByName.clear()
+        damageByName.clear()
+        lastAttackerName = null
         selectedHero = null
         game = buildFreshGame()
         buffer.clear()
@@ -281,6 +301,22 @@ class GameSession(
         }
     }
 
+    /**
+     * Best-performing character of [side] by total damage dealt across the
+     * game. Returns null if no one on that side scored any damage. Uses
+     * [initialPieces] so the MVP can be someone who died during the game.
+     */
+    fun mvpFor(side: Side): PieceRender? {
+        val candidates = when (side) {
+            Side.HEROES   -> initialPieces.filter { it.isHero }
+            Side.MONSTERS -> initialPieces.filter { !it.isHero }
+            Side.DRAW     -> initialPieces.toList()
+        }
+        return candidates
+            .filter { (damageByName[it.name] ?: 0) > 0 }
+            .maxByOrNull { damageByName[it.name] ?: 0 }
+    }
+
     // ---- Internals ----
 
     /** Update [facingLeft] based on a horizontal move from [fromY] to [toY]. */
@@ -315,10 +351,14 @@ class GameSession(
 
     private fun rebuildPiecesFromGame() {
         pieces.clear()
+        initialPieces.clear()
         var heroSum = 0
         var monsterSum = 0
         for (c in game.characters) {
-            renderOf(c)?.let { pieces.add(it) }
+            renderOf(c)?.let {
+                pieces.add(it)
+                initialPieces.add(it)
+            }
             when (c) {
                 is Hero    -> heroSum    += c.initialBody
                 is Monster -> monsterSum += c.initialBody
@@ -352,6 +392,8 @@ class GameSession(
             }
             is GameEvent.Attacked -> {
                 val name = event.attacker.name
+                lastAttackerName = name
+                attacksByName[name] = (attacksByName[name] ?: 0) + 1
                 if (name !in attackingPieces) attackingPieces.add(name)
                 launch {
                     delay(ATTACK_FLASH_MS)
@@ -359,6 +401,9 @@ class GameSession(
                 }
             }
             is GameEvent.Damaged -> {
+                lastAttackerName?.let { attacker ->
+                    damageByName[attacker] = (damageByName[attacker] ?: 0) + event.wounds
+                }
                 val idx = pieces.indexOfFirst { it.name == event.character.name }
                 if (idx >= 0) {
                     val cur = pieces[idx]

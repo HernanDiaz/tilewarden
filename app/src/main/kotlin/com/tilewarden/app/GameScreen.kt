@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tilewarden.core.Side
 import com.tilewarden.core.XYLocation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -44,6 +45,7 @@ fun GameScreen(
 ) {
     var autoPlay by remember { mutableStateOf(false) }
     var inspected: PieceRender? by remember { mutableStateOf(null) }
+    var showSummary by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val round         = session.round
@@ -67,6 +69,17 @@ fun GameScreen(
         inspected?.let { snap ->
             val current = session.pieces.firstOrNull { it.name == snap.name }
             inspected = current  // null if it died; refreshed values otherwise
+        }
+    }
+
+    // Auto-pop the summary modal once the game ends. Small delay so the last
+    // replay frame is visible before the overlay covers it.
+    LaunchedEffect(isOver) {
+        if (isOver) {
+            delay(500)
+            showSummary = true
+        } else {
+            showSummary = false
         }
     }
 
@@ -136,6 +149,8 @@ fun GameScreen(
                     autoPlay = false
                     onBackToMenu()
                 },
+                showSummaryButton = isOver && !showSummary,
+                onShowSummary = { showSummary = true },
             )
         }
 
@@ -143,6 +158,24 @@ fun GameScreen(
             PieceInspector(
                 piece = piece,
                 onDismiss = { inspected = null },
+            )
+        }
+
+        if (showSummary && isOver) {
+            EndOfGameSummary(
+                session = session,
+                showConfetti = winner == com.tilewarden.core.Side.HEROES,
+                onRematch = {
+                    autoPlay = false
+                    showSummary = false
+                    session.reset()
+                },
+                onNewGame = {
+                    autoPlay = false
+                    showSummary = false
+                    onBackToMenu()
+                },
+                onClose = { showSummary = false },
             )
         }
     }
@@ -284,8 +317,16 @@ private fun Controls(
     onToggleAuto: () -> Unit,
     onReset: () -> Unit,
     onMenu: () -> Unit,
+    showSummaryButton: Boolean,
+    onShowSummary: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showSummaryButton) {
+            Button(
+                onClick = onShowSummary,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Show summary") }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
