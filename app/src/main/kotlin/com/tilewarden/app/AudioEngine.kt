@@ -3,6 +3,8 @@ package com.tilewarden.app
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.mutableStateOf
 import kotlin.math.PI
 import kotlin.math.exp
@@ -73,35 +75,52 @@ class AudioEngine {
 
     private val ambientPcm: ShortArray = synthAmbientLoop()
 
+    /** Dedicated handler so position-update callbacks fire on the main
+     *  looper. Without this, building an AudioTrack from a coroutine
+     *  dispatcher (which has no looper) leaves the listener dangling —
+     *  the marker callback never runs, release() never happens, and we
+     *  leak AudioTrack slots until the system stops handing them out. */
+    private val callbackHandler = Handler(Looper.getMainLooper())
+
     fun play(id: SoundId) {
         if (muted) return
         val samples = pcm[id] ?: return
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
+        // Audio failures must NEVER interrupt the game-state mutations
+        // around the call site. Swallow any exception (rare: out-of-memory
+        // on the audio HAL, resource exhaustion, etc.) and move on.
+        try {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            track.write(samples, 0, samples.size)
+            track.setNotificationMarkerPosition(samples.size)
+            track.setPlaybackPositionUpdateListener(
+                object : AudioTrack.OnPlaybackPositionUpdateListener {
+                    override fun onMarkerReached(t: AudioTrack) {
+                        try { t.release() } catch (_: Throwable) {}
+                    }
+                    override fun onPeriodicNotification(t: AudioTrack) {}
+                },
+                callbackHandler,
             )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(samples.size * 2)
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-        track.write(samples, 0, samples.size)
-        track.setNotificationMarkerPosition(samples.size)
-        track.setPlaybackPositionUpdateListener(
-            object : AudioTrack.OnPlaybackPositionUpdateListener {
-                override fun onMarkerReached(t: AudioTrack) { t.release() }
-                override fun onPeriodicNotification(t: AudioTrack) {}
-            }
-        )
-        track.play()
+            track.play()
+        } catch (_: Throwable) {
+            // Couldn't allocate / play. The game logic carries on regardless.
+        }
     }
 
     /**
@@ -119,28 +138,33 @@ class AudioEngine {
     private fun startAmbient() {
         if (ambientTrack != null) return
         val samples = ambientPcm
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(samples.size * 2)
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-        track.write(samples, 0, samples.size)
-        // Loop the whole buffer forever (-1).
-        track.setLoopPoints(0, samples.size, -1)
-        track.play()
-        ambientTrack = track
+        try {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            track.write(samples, 0, samples.size)
+            // Loop the whole buffer forever (-1).
+            track.setLoopPoints(0, samples.size, -1)
+            track.play()
+            ambientTrack = track
+        } catch (_: Throwable) {
+            // Ambient is decorative; if it can't start we silently skip it.
+            ambientTrack = null
+        }
     }
 
     private fun stopAmbient() {
