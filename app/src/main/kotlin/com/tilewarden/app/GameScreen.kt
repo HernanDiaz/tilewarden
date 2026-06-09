@@ -56,6 +56,21 @@ fun GameScreen(
         onDispose { audio.setAmbientActive(false) }
     }
 
+    // Watchdog: the audio HAL can quietly evict our looping ambient track
+    // under pressure (focus changes, transient load). Poll every 2 s while
+    // we're on this screen; if the track has died and the player still
+    // wants sound, re-arm it by toggling off+on. Cheap (a single getter
+    // call) and fixes the 'ambient suddenly stopped' edge case.
+    LaunchedEffect(audio) {
+        while (true) {
+            delay(2000)
+            if (!audio.muted && !audio.isAmbientPlaying()) {
+                audio.setAmbientActive(false)
+                audio.setAmbientActive(true)
+            }
+        }
+    }
+
     val round         = session.round
     val isOver        = session.isOver
     val winner        = session.winner

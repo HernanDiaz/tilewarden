@@ -75,11 +75,11 @@ class AudioEngine {
 
     private val ambientPcm: ShortArray = synthAmbientLoop()
 
-    /** Dedicated handler so position-update callbacks fire on the main
-     *  looper. Without this, building an AudioTrack from a coroutine
-     *  dispatcher (which has no looper) leaves the listener dangling —
-     *  the marker callback never runs, release() never happens, and we
-     *  leak AudioTrack slots until the system stops handing them out. */
+    /** Main-looper handler used to schedule deterministic release() calls
+     *  after each SFX is done playing. We deliberately do NOT rely on
+     *  AudioTrack's setNotificationMarkerPosition callback — in practice
+     *  it's unreliable when the track is built from a coroutine
+     *  dispatcher, which leaks slots and eventually silences everything. */
     private val callbackHandler = Handler(Looper.getMainLooper())
 
     fun play(id: SoundId) {
@@ -107,19 +107,29 @@ class AudioEngine {
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
             track.write(samples, 0, samples.size)
-            track.setNotificationMarkerPosition(samples.size)
-            track.setPlaybackPositionUpdateListener(
-                object : AudioTrack.OnPlaybackPositionUpdateListener {
-                    override fun onMarkerReached(t: AudioTrack) {
-                        try { t.release() } catch (_: Throwable) {}
-                    }
-                    override fun onPeriodicNotification(t: AudioTrack) {}
-                },
-                callbackHandler,
-            )
             track.play()
+            // Deterministic release: schedule stop+release for slightly after
+            // the sample ends. Doesn't depend on marker listeners firing,
+            // which historically have leaked tracks on coroutine threads.
+            val durMs = samples.size * 1000L / SAMPLE_RATE + 150L
+            callbackHandler.postDelayed({
+                try { track.stop() }   catch (_: Throwable) {}
+                try { track.release() } catch (_: Throwable) {}
+            }, durMs)
         } catch (_: Throwable) {
             // Couldn't allocate / play. The game logic carries on regardless.
+        }
+    }
+
+    /** True iff the persistent ambient track is currently live. Used by the
+     *  game screen to re-arm ambient if the audio HAL evicted it (which can
+     *  happen under transient pressure even when we manage our own tracks). */
+    fun isAmbientPlaying(): Boolean {
+        val t = ambientTrack ?: return false
+        return try {
+            t.playState == AudioTrack.PLAYSTATE_PLAYING
+        } catch (_: Throwable) {
+            false
         }
     }
 
