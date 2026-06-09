@@ -75,33 +75,26 @@ fun GameScreen(
         }
     }
 
-    // Auto-advance the round when:
-    //  1) every alive hero has been touched at least once this round (moved
-    //     or attacked — purely selecting and deselecting doesn't count), AND
-    //  2) the player isn't currently planning a move (no hero selected).
-    //
-    // Using touchedThisRound (instead of actedThisRound) means the player
-    // doesn't have to spend every single step of every hero — moving once
-    // is enough. The selectedHero == null guard prevents firing while the
-    // player is mid-decision with a hero still highlighted.
+    // Auto-advance once every alive hero has fully exhausted their actions
+    // (ran out of movement points OR used their attack). Heroes are added
+    // to actedThisRound by GameSession.manualMove (when movesLeft hits 0)
+    // and manualAttack (always — attacks consume the whole turn).
     //
     // nextRound() is dispatched into `scope` (the screen-level coroutine
     // scope), NOT awaited inside the LaunchedEffect. If we awaited it here
     // the effect would cancel mid-call as soon as nextRound mutated any of
     // the keys, interrupting resolveRound + replayBuffered halfway through.
     LaunchedEffect(
-        session.touchedThisRound.size,
-        session.selectedHero,
+        session.actedThisRound.size,
         session.pieces.size,
         session.isOver,
     ) {
         if (session.isAnimating || session.isOver) return@LaunchedEffect
-        if (session.selectedHero != null) return@LaunchedEffect
         val aliveHeroes = session.pieces.filter { it.isHero }
         if (aliveHeroes.isEmpty()) return@LaunchedEffect
-        if (aliveHeroes.all { it.name in session.touchedThisRound }) {
+        if (aliveHeroes.all { it.name in session.actedThisRound }) {
             delay(600)
-            if (!session.isAnimating && !session.isOver && session.selectedHero == null) {
+            if (!session.isAnimating && !session.isOver) {
                 scope.launch { session.nextRound() }
             }
         }
