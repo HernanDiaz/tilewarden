@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,13 @@ fun GameScreen(
     var inspected: PieceRender? by remember { mutableStateOf(null) }
     var showSummary by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // Ambient drone runs as long as we're on the game screen. Honours the
+    // mute toggle internally; we just declare intent.
+    DisposableEffect(audio) {
+        audio.setAmbientActive(true)
+        onDispose { audio.setAmbientActive(false) }
+    }
 
     val round         = session.round
     val isOver        = session.isOver

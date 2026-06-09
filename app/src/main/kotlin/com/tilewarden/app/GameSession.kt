@@ -260,6 +260,7 @@ class GameSession(
         if (name !in touchedThisRound) touchedThisRound.add(name)
         movesLeft[name] = (movesLeft[name] ?: 0) - 1
         log.add("$name${from} -> ${target}")
+        audio?.play(SoundId.STEP)
 
         // Out of moves: fully done, fade out and deselect.
         if ((movesLeft[name] ?: 0) <= 0) {
@@ -394,6 +395,7 @@ class GameSession(
     private fun CoroutineScope.applyEventToPieces(event: GameEvent) {
         when (event) {
             is GameEvent.PieceMoved -> {
+                audio?.play(SoundId.STEP)
                 val idx = pieces.indexOfFirst { it.name == event.character.name }
                 if (idx >= 0) {
                     pieces[idx] = pieces[idx].copy(

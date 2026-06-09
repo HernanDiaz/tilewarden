@@ -3,9 +3,7 @@ package com.tilewarden.app
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -23,25 +21,45 @@ enum class SoundId {
     DEATH,
     VICTORY,
     DEFEAT,
+    STEP,
 }
 
 /**
  * Plays short 8-bit-feel sound effects synthesised in code at construction
- * time. No external audio assets, no resource files — every sample is
- * rendered into a 16-bit PCM buffer (mono, 22050 Hz) by the `synthXxx`
- * helpers and cached in [pcm].
+ * time, plus a low dungeon-drone ambient loop. No external audio assets, no
+ * resource files — every sample is rendered into 16-bit PCM (mono, 22050
+ * Hz) by the `synthXxx` helpers and cached.
  *
- * [play] spins up a fresh [AudioTrack] in `MODE_STATIC`, writes the whole
- * buffer in one shot, fires `play()`, and self-releases on the playback
- * marker. Cheap enough for the cadence of a turn-based replay (a handful
- * of SFX per second peak) without juggling a pool.
+ * SFX: [play] spins up a fresh [AudioTrack] in `MODE_STATIC`, writes the
+ * whole buffer in one shot, fires `play()`, and self-releases on the
+ * playback marker. Cheap enough for the cadence of a turn-based replay
+ * without juggling a pool.
  *
- * [muted] is a Compose-observable property: flip it from the UI and every
- * subsequent [play] turns into a no-op until you flip it back.
+ * Ambient: [setAmbientActive] (typically called from the game screen's
+ * `DisposableEffect`) owns a single persistent looping `AudioTrack`. The
+ * loop buffer is 8 seconds long; every tonal component is a multiple of
+ * 0.125 Hz so cycles close exactly at the wrap-around, hiding any click.
+ *
+ * [muted] is Compose-observable. Flipping it to true silences SFX AND
+ * suspends the ambient; flipping it back resumes ambient if a previous
+ * [setAmbientActive] call asked for it.
  */
 class AudioEngine {
 
-    var muted: Boolean by mutableStateOf(false)
+    private val _muted = mutableStateOf(false)
+    var muted: Boolean
+        get() = _muted.value
+        set(value) {
+            if (_muted.value == value) return
+            _muted.value = value
+            if (value) stopAmbient()
+            else if (ambientWanted) startAmbient()
+        }
+
+    /** True iff the caller has asked for ambient to be on; honoured as long
+     *  as we're not muted. Survives mute/unmute toggles. */
+    private var ambientWanted: Boolean = false
+    private var ambientTrack: AudioTrack? = null
 
     private val pcm: Map<SoundId, ShortArray> = mapOf(
         SoundId.ATTACK_SWING to synthAttackSwing(),
@@ -50,7 +68,10 @@ class AudioEngine {
         SoundId.DEATH        to synthDeath(),
         SoundId.VICTORY      to synthVictory(),
         SoundId.DEFEAT       to synthDefeat(),
+        SoundId.STEP         to synthStep(),
     )
+
+    private val ambientPcm: ShortArray = synthAmbientLoop()
 
     fun play(id: SoundId) {
         if (muted) return
@@ -81,6 +102,54 @@ class AudioEngine {
             }
         )
         track.play()
+    }
+
+    /**
+     * Declare whether ambient should be playing. Idempotent: only kicks the
+     * track when state actually changes. Honours [muted] — when muted, we
+     * remember the intent ([ambientWanted]) and resume on unmute.
+     */
+    fun setAmbientActive(active: Boolean) {
+        if (ambientWanted == active && (active.not() == (ambientTrack == null))) return
+        ambientWanted = active
+        if (active && !muted) startAmbient()
+        else if (!active) stopAmbient()
+    }
+
+    private fun startAmbient() {
+        if (ambientTrack != null) return
+        val samples = ambientPcm
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(samples.size * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+        track.write(samples, 0, samples.size)
+        // Loop the whole buffer forever (-1).
+        track.setLoopPoints(0, samples.size, -1)
+        track.play()
+        ambientTrack = track
+    }
+
+    private fun stopAmbient() {
+        ambientTrack?.let { t ->
+            try { t.pause() }   catch (_: Throwable) {}
+            try { t.flush() }   catch (_: Throwable) {}
+            try { t.release() } catch (_: Throwable) {}
+        }
+        ambientTrack = null
     }
 
     // ---- Render helpers ----
@@ -116,7 +185,7 @@ class AudioEngine {
     private fun decay(t: Double, dur: Double, k: Double = 4.0): Double =
         exp(-t * k / dur)
 
-    // ---- Concrete effects ----
+    // ---- Concrete SFX ----
 
     /** Whoosh: noise burst + descending sine sweep, ~120 ms. */
     private fun synthAttackSwing(): ShortArray = render(120) { t ->
@@ -153,6 +222,13 @@ class AudioEngine {
     private fun synthDefeat(): ShortArray =
         concatNotes(doubleArrayOf(523.25, 440.0, 349.23, 261.63), noteMs = 140)
 
+    /** Soft footstep: noise burst with a low pop, ~45 ms. Volume kept low so
+     *  it doesn't fight the swoosh / hit cluster during a multi-step replay. */
+    private fun synthStep(): ShortArray = render(45) { t ->
+        val env = decay(t, 0.04, 8.0)
+        noiseW() * env * 0.35 + sineW(t, 80.0) * env * 0.25
+    }
+
     /** Render a sequence of square-wave notes back to back, each with its own
      *  decay envelope. Used for VICTORY / DEFEAT jingles. */
     private fun concatNotes(notes: DoubleArray, noteMs: Int): ShortArray {
@@ -166,6 +242,43 @@ class AudioEngine {
                 out[off + i] = toSample(square(t, f) * env * 0.4)
             }
             off += noteSamples
+        }
+        return out
+    }
+
+    // ---- Ambient loop ----
+
+    /**
+     * 8-second dungeon drone. Three low sines (A1, E2, A2 — root + fifth +
+     * octave) modulated by a 0.25 Hz LFO (exactly two full LFO cycles per
+     * buffer so the envelope is continuous at the loop point), plus a
+     * 1-pole low-passed noise layer for breath / wind.
+     *
+     * Every tonal frequency is a multiple of 1/8 Hz (= 0.125 Hz), so each
+     * sine closes an integer number of cycles in the 8-second buffer —
+     * the loop wrap has no waveform discontinuity. The noise layer is
+     * random so it can pop microscopically, but its amplitude is low and
+     * the low-pass smooths it; in practice the loop sounds seamless.
+     */
+    private fun synthAmbientLoop(): ShortArray {
+        val durSec = 8.0
+        val n = (SAMPLE_RATE * durSec).toInt()
+        val out = ShortArray(n)
+        var lpf = 0.0
+        val lpfAlpha = 0.04  // strong low-pass for the wind layer
+
+        for (i in 0 until n) {
+            val t = i.toDouble() / SAMPLE_RATE
+            // 0.25 Hz LFO, two full cycles over 8 s; ranges 0.5..1.0
+            val lfo = 0.75 + 0.25 * sin(2 * PI * 0.25 * t)
+            val a1     = sineW(t, 55.0)   * 0.35 * lfo
+            val a2     = sineW(t, 110.0)  * 0.18 * lfo
+            val fifth  = sineW(t, 82.5)   * 0.10
+            val noiseRaw = noiseW() * 0.5
+            lpf += lpfAlpha * (noiseRaw - lpf)
+            // Overall scale 0.42 keeps the drone clearly under the SFX.
+            val v = (a1 + a2 + fifth + lpf * 0.25) * 0.42
+            out[i] = toSample(v)
         }
         return out
     }
