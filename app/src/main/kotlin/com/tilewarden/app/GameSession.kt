@@ -161,7 +161,11 @@ class GameSession(
     // ---- AI round ----
 
     suspend fun nextRound() {
-        if (isOver || isAnimating) return
+        android.util.Log.d("Tilewarden", "nextRound() called. isOver=$isOver isAnimating=$isAnimating round=${game.currentRound} touched=${touchedThisRound.toList()}")
+        if (isOver || isAnimating) {
+            android.util.Log.d("Tilewarden", "nextRound() early return")
+            return
+        }
         selectedHero = null
         isAnimating = true
         try {
@@ -170,6 +174,7 @@ class GameSession(
                 GameEngine.resolveRound(game, skipNames = touchedThisRound.toSet())
                 GameEngine.advanceRound(game)
             }
+            android.util.Log.d("Tilewarden", "after resolveRound, buffer size=${buffer.size}")
             if (GameEngine.isOver(game)) {
                 observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
             }
@@ -178,6 +183,7 @@ class GameSession(
             touchedThisRound.clear()
             actedThisRound.clear()
             resetMovesLeft()
+            android.util.Log.d("Tilewarden", "nextRound() finished. new round=$round")
         } finally {
             isAnimating = false
         }
@@ -384,12 +390,17 @@ class GameSession(
     }
 
     private suspend fun replayBuffered() = coroutineScope {
+        android.util.Log.d("Tilewarden", "replayBuffered START size=${buffer.size}")
+        var processed = 0
         while (buffer.isNotEmpty()) {
             val event = buffer.removeFirst()
+            android.util.Log.d("Tilewarden", "  event[$processed] = ${event::class.simpleName}")
             describe(event).takeIf { it.isNotEmpty() }?.let { log.add(it) }
             applyEventToPieces(event)
             delay(durationFor(event))
+            processed++
         }
+        android.util.Log.d("Tilewarden", "replayBuffered END processed=$processed")
     }
 
     private fun CoroutineScope.applyEventToPieces(event: GameEvent) {

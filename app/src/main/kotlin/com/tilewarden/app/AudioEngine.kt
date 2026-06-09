@@ -103,13 +103,20 @@ class AudioEngine(context: Context) {
     }
 
     fun play(id: SoundId) {
-        if (muted) return
-        val sampleId = sfxIds[id] ?: return
-        // play returns 0 on failure (e.g. sample still loading); that's fine,
-        // we just drop the SFX. Throwing must never propagate up.
+        if (muted) {
+            android.util.Log.d("Tilewarden", "play($id) skipped: muted")
+            return
+        }
+        val sampleId = sfxIds[id]
+        if (sampleId == null) {
+            android.util.Log.w("Tilewarden", "play($id) skipped: no sample id")
+            return
+        }
         try {
-            soundPool.play(sampleId, 1f, 1f, /*priority*/ 1, /*loop*/ 0, /*rate*/ 1f)
-        } catch (_: Throwable) {
+            val streamId = soundPool.play(sampleId, 1f, 1f, /*priority*/ 1, /*loop*/ 0, /*rate*/ 1f)
+            android.util.Log.d("Tilewarden", "play($id) sampleId=$sampleId -> streamId=$streamId")
+        } catch (t: Throwable) {
+            android.util.Log.w("Tilewarden", "play($id) threw", t)
         }
     }
 
