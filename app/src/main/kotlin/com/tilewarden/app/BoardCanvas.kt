@@ -245,22 +245,41 @@ fun BoardCanvas(
 
             // 2) Horizontal walls only — nothing to the left or right.
             //
-            // Both walls are 2 tiles tall: wall_top_mid (remate strip,
-            // dark line at the top of the tile) above wall_mid (brick
-            // body). The bottom wall's remate sits ON TOP of its body,
-            // mirroring the top wall — its dark line marks where the
-            // bottom wall begins, right under the floor.
+            // wall_top_mid is 16x16 BUT its top 6 rows are fully
+            // transparent (alpha 0). Drawn as-is for the TOP wall this
+            // is harmless because nothing sits above row 0. For the
+            // BOTTOM wall those transparent pixels appear between the
+            // floor and the body and read as a black gap, since the
+            // canvas background is dark.
             //
-            // Row 0:        wall_top_mid x cols   (top remate)
-            // Row 1:        wall_mid     x cols   (top body)
+            // Fix: for the bottom remate, draw a CROPPED version of
+            // wall_top_mid — the bottom 10 visible pixels stretched to
+            // fill the whole cell. Same brick + dark-line look, no
+            // transparent band on top.
+            //
+            // Row 0:        wall_top_mid x cols                       (top remate)
+            // Row 1:        wall_mid     x cols                       (top body)
             // Rows 2..N+1:  playable floor
-            // Row N+2:      wall_top_mid x cols   (bottom remate)
-            // Row N+3:      wall_mid     x cols   (bottom body)
+            // Row N+2:      wall_top_mid cropped (rows 6..15) x cols  (bottom remate)
+            // Row N+3:      wall_mid     x cols                       (bottom body)
+            val cropTop = 6
+            val visibleHeight = wallTopMid.height - cropTop
+            val sInt = tileSizePx.roundToInt()
             for (rc in 0 until renderCols) {
-                drawTile(wallTopMid, renderRow = 0,              renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallMid,    renderRow = 1,              renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallTopMid, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallMid,    renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallTopMid, renderRow = 0, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallMid,    renderRow = 1, renderCol = rc, tileSizePx = tileSizePx)
+                // Bottom remate: cropped to skip the transparent top band.
+                val left = rc * tileSizePx
+                val top  = (renderRows - 2) * tileSizePx
+                drawImage(
+                    image = wallTopMid,
+                    srcOffset = IntOffset(0, cropTop),
+                    srcSize = IntSize(wallTopMid.width, visibleHeight),
+                    dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                    dstSize = IntSize(sInt, sInt),
+                    filterQuality = FilterQuality.None,
+                )
+                drawTile(wallMid, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
 
             // 3) Valid-move tints over playable floor cells.
