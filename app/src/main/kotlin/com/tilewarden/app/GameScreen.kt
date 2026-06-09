@@ -83,6 +83,29 @@ fun GameScreen(
         }
     }
 
+    // Auto-advance once every alive hero has fully spent their turn. Manual
+    // play turns into something like: tap heroes, move them, see the AI
+    // round resolve, repeat — without ever needing to press Next round.
+    LaunchedEffect(
+        session.actedThisRound.size,
+        session.pieces.size,
+        session.isAnimating,
+        session.isOver,
+        autoPlay,
+    ) {
+        if (autoPlay || session.isAnimating || session.isOver) return@LaunchedEffect
+        val aliveHeroes = session.pieces.filter { it.isHero }
+        if (aliveHeroes.isEmpty()) return@LaunchedEffect
+        if (aliveHeroes.all { it.name in session.actedThisRound }) {
+            delay(600)
+            // Re-check after the delay: the player might have hit Reset
+            // or pressed something during the wait.
+            if (!session.isAnimating && !session.isOver) {
+                session.nextRound()
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
