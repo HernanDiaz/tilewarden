@@ -142,14 +142,17 @@ fun BoardCanvas(
         ImageBitmap.imageResource(R.drawable.floor_3),
         ImageBitmap.imageResource(R.drawable.floor_4),
     )
-    val wallTopLeft     = ImageBitmap.imageResource(R.drawable.wall_top_left)
-    val wallTopMid      = ImageBitmap.imageResource(R.drawable.wall_top_mid)
-    val wallTopRight    = ImageBitmap.imageResource(R.drawable.wall_top_right)
-    val wallLeft        = ImageBitmap.imageResource(R.drawable.wall_left)
-    val wallRight       = ImageBitmap.imageResource(R.drawable.wall_right)
-    val wallMid         = ImageBitmap.imageResource(R.drawable.wall_mid)
-    val wallBottomLeft  = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_left)
-    val wallBottomRight = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_right)
+    val wallTopLeft       = ImageBitmap.imageResource(R.drawable.wall_top_left)
+    val wallTopMid        = ImageBitmap.imageResource(R.drawable.wall_top_mid)
+    val wallTopRight      = ImageBitmap.imageResource(R.drawable.wall_top_right)
+    val wallMid           = ImageBitmap.imageResource(R.drawable.wall_mid)
+    val wallBottomLeft    = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_left)
+    val wallBottomRight   = ImageBitmap.imageResource(R.drawable.wall_edge_bottom_right)
+    // Thin vertical "remate" for the side columns + corner transitions.
+    val wallEdgeMidLeft   = ImageBitmap.imageResource(R.drawable.wall_edge_mid_left)
+    val wallEdgeMidRight  = ImageBitmap.imageResource(R.drawable.wall_edge_mid_right)
+    val wallEdgeTopLeft   = ImageBitmap.imageResource(R.drawable.wall_edge_top_left)
+    val wallEdgeTopRight  = ImageBitmap.imageResource(R.drawable.wall_edge_top_right)
 
     fun floorAt(r: Int, c: Int): ImageBitmap {
         // Deterministic hash → stable floor per cell across recompositions.
@@ -243,16 +246,24 @@ fun BoardCanvas(
                 }
             }
 
-            // 2) Wall perimeter. Horizontal walls are TWO rows high — a
-            // top_mid 'remate' strip stacked on top of a mid 'brick' body —
-            // both at the top of the board and the bottom. Vertical sides
-            // are a single column of wall_left / wall_right tiles.
+            // 2) Wall perimeter.
             //
-            // Row 0:           wall_top_left  + wall_top_mid x N  + wall_top_right
-            // Row 1:           wall_left      + wall_mid     x N  + wall_right
-            //   playable area (rows tall)
-            // Row N+2:         wall_left      + wall_mid     x N  + wall_right
-            // Row N+3:         wall_bottom_left + wall_top_mid x N + wall_bottom_right
+            // Horizontal walls are two rows high: a `wall_top_mid` remate
+            // strip sits on TOP of a `wall_mid` brick body. Vertical sides
+            // are NOT bricks — they're a thin vertical 'remate' line drawn
+            // with `wall_edge_mid_left/right` (mostly transparent so the
+            // floor underneath shows through up to the edge).
+            //
+            // The four corner transitions where the horizontal body meets
+            // the thin vertical remate use `wall_edge_top_left/right`,
+            // which carry a brick stub on one side and the vertical line
+            // on the other.
+            //
+            // Row 0:        wall_top_left      + wall_top_mid x N + wall_top_right
+            // Row 1:        wall_edge_top_left + wall_mid     x N + wall_edge_top_right
+            // Rows 2..N+1:  wall_edge_mid_left + (playable floor)  + wall_edge_mid_right
+            // Row N+2:      wall_edge_bottom_left + wall_top_mid x N + wall_edge_bottom_right
+            // Row N+3:      wall_edge_top_left + wall_mid     x N + wall_edge_top_right
 
             // Top remate (row 0)
             for (rc in 0 until renderCols) {
@@ -263,23 +274,22 @@ fun BoardCanvas(
                 }
                 drawTile(tile, renderRow = 0, renderCol = rc, tileSizePx = tileSizePx)
             }
-            // Top brick body (row 1)
+            // Top brick body (row 1) — corners step down to the thin remate.
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
-                    0              -> wallLeft
-                    renderCols - 1 -> wallRight
+                    0              -> wallEdgeTopLeft
+                    renderCols - 1 -> wallEdgeTopRight
                     else           -> wallMid
                 }
                 drawTile(tile, renderRow = 1, renderCol = rc, tileSizePx = tileSizePx)
             }
-            // Side walls along the playable rows (between the two horizontal walls)
+            // Thin vertical remate along the playable rows.
             for (rr in playRowOffset until playRowOffset + rows) {
-                drawTile(wallLeft,  renderRow = rr, renderCol = 0,              tileSizePx = tileSizePx)
-                drawTile(wallRight, renderRow = rr, renderCol = renderCols - 1, tileSizePx = tileSizePx)
+                drawTile(wallEdgeMidLeft,  renderRow = rr, renderCol = 0,              tileSizePx = tileSizePx)
+                drawTile(wallEdgeMidRight, renderRow = rr, renderCol = renderCols - 1, tileSizePx = tileSizePx)
             }
-            // Bottom remate (row renderRows - 2): the dark strip belongs at
-            // the TOP of every wall — for the lower wall that means the
-            // penultimate row, not the final one.
+            // Bottom remate (row renderRows - 2): dark strip sits at the
+            // top of the lower wall.
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
                     0              -> wallBottomLeft
@@ -288,11 +298,11 @@ fun BoardCanvas(
                 }
                 drawTile(tile, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
             }
-            // Bottom brick body (last row)
+            // Bottom brick body (last row).
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
-                    0              -> wallLeft
-                    renderCols - 1 -> wallRight
+                    0              -> wallEdgeTopLeft
+                    renderCols - 1 -> wallEdgeTopRight
                     else           -> wallMid
                 }
                 drawTile(tile, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
