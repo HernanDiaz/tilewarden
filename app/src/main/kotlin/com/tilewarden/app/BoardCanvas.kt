@@ -136,24 +136,13 @@ fun BoardCanvas(
         else -> null
     }
 
-    // Floor + wall tiles.
-    val floorTiles = listOf(
-        ImageBitmap.imageResource(R.drawable.floor_1),
-        ImageBitmap.imageResource(R.drawable.floor_2),
-        ImageBitmap.imageResource(R.drawable.floor_3),
-        ImageBitmap.imageResource(R.drawable.floor_4),
-    )
+    // A single floor tile used everywhere in the playable area.
+    val floorTile = ImageBitmap.imageResource(R.drawable.floor_1)
     // Only two wall tiles are used now: the dark-strip remate at the top
     // of every wall and the plain brick body underneath. No sides, no
     // corners — the room is open on the left and right.
     val wallTopMid = ImageBitmap.imageResource(R.drawable.wall_top_mid)
     val wallMid    = ImageBitmap.imageResource(R.drawable.wall_mid)
-
-    fun floorAt(r: Int, c: Int): ImageBitmap {
-        // Deterministic hash → stable floor per cell across recompositions.
-        val h = (r * 31 + c * 17) and Int.MAX_VALUE
-        return floorTiles[h % floorTiles.size]
-    }
 
     // Global idle frame cycler.
     var idleFrame by remember { mutableIntStateOf(0) }
@@ -249,11 +238,11 @@ fun BoardCanvas(
 
             translate(top = -canvasShift) {
 
-            // 1) Floor — every playable cell gets a floor tile based on its hash.
+            // 1) Floor — same tile in every playable cell.
             for (r in 0 until rows) {
                 for (c in 0 until columns) {
                     drawTile(
-                        bitmap = floorAt(r, c),
+                        bitmap = floorTile,
                         renderRow = r + playRowOffset,
                         renderCol = c + playColOffset,
                         tileSizePx = tileSizePx,
