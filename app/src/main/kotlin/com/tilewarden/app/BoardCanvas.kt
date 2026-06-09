@@ -233,7 +233,6 @@ fun BoardCanvas(
             val canvasShift = tileSizePx * transparentBandFraction
             val borderPx          = (tileSizePx * 0.04f).coerceAtLeast(1f)
             val attackBorderPx    = borderPx * 2.5f
-            val selectionBorderPx = borderPx * 3f
             val pieceRadius       = tileSizePx * 0.36f
 
             translate(top = -canvasShift) {
@@ -283,6 +282,30 @@ fun BoardCanvas(
                             size = Size(tileSizePx, tileSizePx),
                         )
                     }
+                }
+            }
+
+            // 3.5) Selected hero cell highlight — drawn UNDER the sprite so
+            // the 16x28 sprite poking out the top of its tile isn't masked
+            // by the yellow frame. Thin, translucent border plus a very
+            // soft fill so the cell still reads as 'picked' even when the
+            // sprite's head covers the top edge of the border.
+            selectedHero?.let { sel ->
+                pieces.firstOrNull { it.name == sel }?.let { selPiece ->
+                    val sx = (selPiece.column + playColOffset) * tileSizePx
+                    val sy = (selPiece.row + playRowOffset) * tileSizePx
+                    drawRect(
+                        color = SELECTION_BORDER_COLOR.copy(alpha = 0.16f),
+                        topLeft = Offset(sx, sy),
+                        size = Size(tileSizePx, tileSizePx),
+                    )
+                    val w = borderPx * 1.5f
+                    drawRect(
+                        color = SELECTION_BORDER_COLOR.copy(alpha = 0.7f),
+                        topLeft = Offset(sx + w / 2f, sy + w / 2f),
+                        size = Size(tileSizePx - w, tileSizePx - w),
+                        style = Stroke(width = w),
+                    )
                 }
             }
 
@@ -369,25 +392,21 @@ fun BoardCanvas(
                     )
                 }
 
-                // 5) Selection / attack frames around the piece's cell.
-                val isAttacking = piece.name in attackingPieces
-                val isSelected  = piece.name == selectedHero
-                if (isSelected || isAttacking) {
-                    val outlineColor = if (isSelected) SELECTION_BORDER_COLOR
-                                       else            ATTACK_BORDER_COLOR
-                    val outlineWidth = if (isSelected) selectionBorderPx
-                                       else            attackBorderPx
+                // 5) Attack flash frame around the attacker's cell. Drawn
+                // OVER the sprite (unlike the selection ring) because it's
+                // a brief impact effect that should pop visually.
+                if (piece.name in attackingPieces) {
                     drawRect(
-                        color = outlineColor.copy(alpha = alpha),
+                        color = ATTACK_BORDER_COLOR.copy(alpha = alpha),
                         topLeft = Offset(
-                            (piece.column + playColOffset) * tileSizePx + outlineWidth / 2f,
-                            (piece.row + playRowOffset) * tileSizePx + outlineWidth / 2f,
+                            (piece.column + playColOffset) * tileSizePx + attackBorderPx / 2f,
+                            (piece.row + playRowOffset) * tileSizePx + attackBorderPx / 2f,
                         ),
                         size = Size(
-                            tileSizePx - outlineWidth,
-                            tileSizePx - outlineWidth,
+                            tileSizePx - attackBorderPx,
+                            tileSizePx - attackBorderPx,
                         ),
-                        style = Stroke(width = outlineWidth),
+                        style = Stroke(width = attackBorderPx),
                     )
                 }
             }
