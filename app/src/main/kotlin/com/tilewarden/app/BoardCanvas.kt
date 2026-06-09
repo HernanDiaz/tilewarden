@@ -6,6 +6,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -32,20 +34,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tilewarden.core.XYLocation
 
 private const val MOVE_ANIMATION_MS = 400
-private val ATTACK_BORDER_COLOR = Color(0xFFFF5040)
-private val DAMAGE_BUBBLE_COLOR = Color(0xFFE04A4A)
+private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
+private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE04A4A)
+private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)   // gold
+private val VALID_MOVE_COLOR       = Color(0x6685D67A)   // semi-transparent green
+private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)   // semi-transparent orange
 
 /**
- * 2D rendering of the board, with per-piece movement animation, attack
- * highlight, death fade-out, and floating damage numbers.
- *
- * The Canvas itself paints the grid + pieces; floating damage labels are
- * regular Composables overlaid on top of the same [BoxWithConstraints], so
- * we can position them with Dp and let them animate as separate widgets.
+ * 2D board with full interactivity: tap detection, selection highlight,
+ * valid-move and valid-attack overlays, plus the VFX from milestone 4
+ * (movement slide, attack flash, death fade, floating damage labels).
  */
 @Composable
 fun BoardCanvas(
@@ -55,6 +57,10 @@ fun BoardCanvas(
     dyingPieces: List<String>,
     attackingPieces: List<String>,
     damageBubbles: List<DamageBubble>,
+    selectedHero: String?,
+    validMoves: Set<XYLocation>,
+    validAttackTargets: Set<String>,
+    onTileTap: (row: Int, column: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tileFill   = MaterialTheme.colorScheme.surface
@@ -69,8 +75,6 @@ fun BoardCanvas(
         fontWeight = FontWeight.Bold,
     )
 
-    // Animated state per piece, keyed by stable name so peers' deaths don't
-    // disrupt the others' animation slots.
     val animatedPieces: List<AnimatedPiece> = pieces.map { piece ->
         key(piece.name) {
             val animCol by animateFloatAsState(
@@ -96,7 +100,15 @@ fun BoardCanvas(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(columns.toFloat() / rows.toFloat()),
+            .aspectRatio(columns.toFloat() / rows.toFloat())
+            .pointerInput(rows, columns) {
+                detectTapGestures { offset ->
+                    val tileSizePx = size.width.toFloat() / columns
+                    val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
+                    val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
+                    onTileTap(row, col)
+                }
+            },
     ) {
         val tileSize: Dp = maxWidth / columns
 
@@ -104,15 +116,22 @@ fun BoardCanvas(
             val tileSizePx = size.width / columns
             val borderPx = (tileSizePx * 0.04f).coerceAtLeast(1f)
             val attackBorderPx = borderPx * 2.5f
+            val selectionBorderPx = borderPx * 3f
             val pieceRadius = tileSizePx * 0.36f
             val emptyDotRadius = tileSizePx * 0.06f
 
-            // Grid.
+            // Grid + highlights.
             for (row in 0 until rows) {
                 for (col in 0 until columns) {
                     val topLeft = Offset(col * tileSizePx, row * tileSizePx)
                     val cellSize = Size(tileSizePx, tileSizePx)
                     drawRect(color = tileFill, topLeft = topLeft, size = cellSize)
+
+                    // Valid-move tint: paint the whole cell in green.
+                    if (XYLocation(row, col) in validMoves) {
+                        drawRect(color = VALID_MOVE_COLOR, topLeft = topLeft, size = cellSize)
+                    }
+
                     drawRect(
                         color = tileBorder,
                         topLeft = topLeft,
@@ -137,14 +156,34 @@ fun BoardCanvas(
                 val cx = ap.column * tileSizePx + tileSizePx / 2f
                 val cy = ap.row    * tileSizePx + tileSizePx / 2f
 
+                // Background tint for attackable enemies (uses LOGICAL position,
+                // not animated, so the tint stays put under the disc).
+                if (piece.name in validAttackTargets) {
+                    drawRect(
+                        color = VALID_ATTACK_COLOR,
+                        topLeft = Offset(
+                            piece.column * tileSizePx,
+                            piece.row * tileSizePx,
+                        ),
+                        size = Size(tileSizePx, tileSizePx),
+                    )
+                }
+
                 drawCircle(
                     color = piece.color.copy(alpha = alpha),
                     radius = pieceRadius,
                     center = Offset(cx, cy),
                 )
+
                 val isAttacking = piece.name in attackingPieces
-                val outlineColor = if (isAttacking) ATTACK_BORDER_COLOR else symbolInk
-                val outlineWidth = if (isAttacking) attackBorderPx else borderPx
+                val isSelected  = piece.name == selectedHero
+                val outlineColor: Color
+                val outlineWidth: Float
+                when {
+                    isSelected  -> { outlineColor = SELECTION_BORDER_COLOR; outlineWidth = selectionBorderPx }
+                    isAttacking -> { outlineColor = ATTACK_BORDER_COLOR;    outlineWidth = attackBorderPx }
+                    else        -> { outlineColor = symbolInk;              outlineWidth = borderPx }
+                }
                 drawCircle(
                     color = outlineColor.copy(alpha = alpha),
                     radius = pieceRadius,
@@ -167,9 +206,6 @@ fun BoardCanvas(
             }
         }
 
-        // Floating "-N" damage labels above wounded pieces. Live as long as
-        // their entry stays in damageBubbles; once the session removes one
-        // its key disappears and the Composable is torn down.
         for (bubble in damageBubbles) {
             key(bubble.id) {
                 DamageBubbleOverlay(bubble = bubble, tileSize = tileSize)
@@ -178,7 +214,6 @@ fun BoardCanvas(
     }
 }
 
-/** Returned from the animated-pieces builder so the Canvas can read scalar floats. */
 private data class AnimatedPiece(
     val piece: PieceRender,
     val column: Float,
@@ -186,10 +221,6 @@ private data class AnimatedPiece(
     val alpha: Float,
 )
 
-/**
- * A single damage label that floats up and fades over [BUBBLE_LIFETIME_MS].
- * Positioned in Dp relative to the parent [BoxWithConstraints].
- */
 @Composable
 private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
     val anim = remember { Animatable(0f) }
@@ -200,8 +231,6 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
         )
     }
     val progress = anim.value
-
-    // Start anchored near the top of the piece's tile, rise by ~80 % of a tile.
     val baseTopOffsetDp = tileSize * bubble.row + tileSize * 0.05f
     val rise = tileSize * 0.8f * progress
 

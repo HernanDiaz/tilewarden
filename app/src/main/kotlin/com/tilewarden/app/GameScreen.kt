@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tilewarden.core.Side
+import com.tilewarden.core.XYLocation
 import kotlinx.coroutines.launch
 
 @Composable
@@ -40,17 +41,14 @@ fun GameScreen(session: GameSession) {
     var autoPlay by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Reading these on the GameScreen scope establishes Compose-state
-    // subscriptions, which guarantees recomposition when the session ticks.
-    val round       = session.round
-    val isOver      = session.isOver
-    val winner      = session.winner
-    val isAnimating = session.isAnimating
+    val round         = session.round
+    val isOver        = session.isOver
+    val winner        = session.winner
+    val isAnimating   = session.isAnimating
+    val selectedHero  = session.selectedHero
+    val validMoves    = session.validMoveTargets()
+    val attackTargets = session.validAttackTargets()
 
-    // Auto-play: as long as the toggle is on and the game hasn't ended,
-    // chain nextRound() calls. Each call is suspending and only returns
-    // when the round's events finish replaying, so we don't need extra
-    // delays here — the visual cadence is set by the per-event timings.
     LaunchedEffect(autoPlay) {
         while (autoPlay && !session.isOver) {
             session.nextRound()
@@ -70,6 +68,7 @@ fun GameScreen(session: GameSession) {
             totalRounds = session.totalRounds,
             heroesAlive = session.heroesAlive,
             monstersAlive = session.monstersAlive,
+            selectedHero = selectedHero,
             isOver = isOver,
             winner = winner,
         )
@@ -82,6 +81,12 @@ fun GameScreen(session: GameSession) {
                 dyingPieces = session.dyingPieces,
                 attackingPieces = session.attackingPieces,
                 damageBubbles = session.damageBubbles,
+                selectedHero = selectedHero,
+                validMoves = validMoves,
+                validAttackTargets = attackTargets,
+                onTileTap = { row, col ->
+                    handleTap(session, row, col, scope)
+                },
             )
         }
 
@@ -106,12 +111,55 @@ fun GameScreen(session: GameSession) {
     }
 }
 
+/**
+ * Tap dispatcher: figure out what the tap means given current selection
+ * state, and call the right session method.
+ */
+private fun handleTap(
+    session: GameSession,
+    row: Int,
+    column: Int,
+    scope: kotlinx.coroutines.CoroutineScope,
+) {
+    if (session.isAnimating || session.isOver) return
+
+    val tile = XYLocation(row, column)
+    val pieceHere = session.pieces.firstOrNull { it.row == row && it.column == column }
+
+    when {
+        // Tapped a hero: select or toggle selection.
+        pieceHere != null && pieceHere.isHero -> {
+            if (session.selectedHero == pieceHere.name) {
+                session.selectHero(null)
+            } else {
+                session.selectHero(pieceHere.name)
+            }
+        }
+        // Tapped an enemy with a hero selected: attack if it's a valid target.
+        pieceHere != null && !pieceHere.isHero -> {
+            if (pieceHere.name in session.validAttackTargets()) {
+                scope.launch { session.manualAttack(pieceHere.name) }
+            }
+        }
+        // Tapped empty square with a hero selected: try to move there.
+        pieceHere == null && session.selectedHero != null -> {
+            if (tile in session.validMoveTargets()) {
+                session.manualMove(tile)
+            } else {
+                // Tap outside legal moves: deselect.
+                session.selectHero(null)
+            }
+        }
+    }
+}
+
 @Composable
 private fun Header(
     round: Int,
     totalRounds: Int,
     heroesAlive: Int,
     monstersAlive: Int,
+    selectedHero: String?,
     isOver: Boolean,
     winner: Side?,
 ) {
@@ -139,6 +187,14 @@ private fun Header(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (selectedHero != null) {
+            Text(
+                text = "Selected: $selectedHero  (tap a green square to move, " +
+                    "an orange enemy to attack, or the hero again to cancel)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -207,8 +263,6 @@ private fun Controls(
     ) {
         Button(
             onClick = onNext,
-            // Disable while the previous round's replay is still in flight,
-            // and obviously when the game is over or auto-play is running.
             enabled = !isOver && !autoPlay && !isAnimating,
             modifier = Modifier.weight(1f),
         ) {

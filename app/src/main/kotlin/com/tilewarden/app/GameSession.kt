@@ -13,7 +13,9 @@ import com.tilewarden.core.Game
 import com.tilewarden.core.GameEngine
 import com.tilewarden.core.GameEvent
 import com.tilewarden.core.GameObserver
+import com.tilewarden.core.Hero
 import com.tilewarden.core.Side
+import com.tilewarden.core.XYLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -33,6 +35,9 @@ internal const val BUBBLE_LIFETIME_MS = 700
 internal const val ATTACK_FLASH_MS    = 220L
 internal const val DEATH_FADE_MS      = DEATH_MS.toInt()
 
+/** Pause after a manual hero step so the slide animation has time to play. */
+private const val MANUAL_STEP_DELAY_MS = 350L
+
 /** A floating "-N" damage label hovering over the wounded piece. */
 @Immutable
 data class DamageBubble(
@@ -43,16 +48,20 @@ data class DamageBubble(
 )
 
 /**
- * Compose state holder that drives a match AND replays its events
- * one-by-one so the UI sees the action unfold piece-by-piece.
+ * Compose state holder that drives a match.
  *
- * In addition to the [pieces] list, the session exposes three short-lived
- * effect collections for the [BoardCanvas] to render on top of the board:
+ * Two ways the game advances:
+ * - **Auto / Next round**: [nextRound] runs a full engine round and
+ *   replays its [GameEvent]s with delays. Heroes the player already
+ *   touched this round are skipped — the AI only animates the others.
+ * - **Manual interaction**: [selectHero] / [manualMove] / [manualAttack]
+ *   let the player drive their heroes directly, one step at a time.
+ *   Each manual action marks the hero as "acted this round", so the
+ *   following [nextRound] won't drive them automatically.
  *
- * - [damageBubbles] — floating "-N" labels above wounded pieces.
- * - [attackingPieces] — names currently mid-attack (red border flash).
- * - [dyingPieces]    — names that took the killing blow but are still
- *   visible while they fade out. They leave [pieces] after [DEATH_MS].
+ * Manual moves bypass the buffered-replay system: the visible state is
+ * mutated immediately and Compose animates the difference. The engine
+ * also publishes events to the observer so the log keeps track.
  */
 class GameSession(
     private val seed: Long,
@@ -74,10 +83,17 @@ class GameSession(
     var isAnimating: Boolean by mutableStateOf(false)
         private set
 
+    /** Currently selected hero — null when no one is picked. */
+    var selectedHero: String? by mutableStateOf(null)
+        private set
+
     val pieces:           SnapshotStateList<PieceRender>  = mutableStateListOf()
     val damageBubbles:    SnapshotStateList<DamageBubble> = mutableStateListOf()
     val attackingPieces:  SnapshotStateList<String>       = mutableStateListOf()
     val dyingPieces:      SnapshotStateList<String>       = mutableStateListOf()
+
+    /** Heroes who took a manual action this round; AI skips them in nextRound. */
+    val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
     val log: SnapshotStateList<String> = mutableStateListOf()
 
@@ -91,19 +107,26 @@ class GameSession(
     private var game: Game = buildFreshGame()
     private var nextBubbleId: Long = 0
 
+    /** Per-hero counter of remaining steps this round (depleted by manual moves). */
+    private val movesLeft = HashMap<String, Int>()
+
     init {
         buffer.clear()
         rebuildPiecesFromGame()
+        resetMovesLeft()
         log.add("=== GAME START ===")
     }
 
+    // ---- AI round ----
+
     suspend fun nextRound() {
         if (isOver || isAnimating) return
+        selectedHero = null
         isAnimating = true
         try {
             buffer.clear()
             if (!GameEngine.isOver(game)) {
-                GameEngine.resolveRound(game)
+                GameEngine.resolveRound(game, skipNames = actedThisRound.toSet())
                 GameEngine.advanceRound(game)
             }
             if (GameEngine.isOver(game)) {
@@ -111,6 +134,8 @@ class GameSession(
             }
             replayBuffered()
             round = game.currentRound
+            actedThisRound.clear()
+            resetMovesLeft()
         } finally {
             isAnimating = false
         }
@@ -124,14 +149,117 @@ class GameSession(
         damageBubbles.clear()
         attackingPieces.clear()
         dyingPieces.clear()
+        actedThisRound.clear()
+        selectedHero = null
         game = buildFreshGame()
         buffer.clear()
         rebuildPiecesFromGame()
+        resetMovesLeft()
         round = game.currentRound
         log.add("=== GAME START ===")
     }
 
-    // ----- Internals -----
+    // ---- Manual interaction ----
+
+    /** Toggle selection of a hero. No-op while animating or for off-limits heroes. */
+    fun selectHero(name: String?) {
+        if (isAnimating || isOver) return
+        if (name == null) { selectedHero = null; return }
+        val piece = pieces.find { it.name == name } ?: return
+        if (!piece.isHero) return
+        if (name in actedThisRound) return
+        if ((movesLeft[name] ?: 0) <= 0) return
+        selectedHero = if (selectedHero == name) null else name
+    }
+
+    /** Empty squares adjacent to the selected hero. Empty set if nothing selected. */
+    fun validMoveTargets(): Set<XYLocation> {
+        val name = selectedHero ?: return emptySet()
+        val c = game.characters.find { it.name == name } ?: return emptySet()
+        return GameEngine.validPositions(game, c).toSet()
+    }
+
+    /** Adjacent enemy names targetable by the selected hero. */
+    fun validAttackTargets(): Set<String> {
+        val name = selectedHero ?: return emptySet()
+        val c = game.characters.find { it.name == name } ?: return emptySet()
+        return GameEngine.validTargets(game, c).map { it.name }.toSet()
+    }
+
+    /**
+     * Manually move the selected hero one square to [target].
+     * @return `true` if the move happened.
+     */
+    fun manualMove(target: XYLocation): Boolean {
+        if (isAnimating || isOver) return false
+        val name = selectedHero ?: return false
+        if ((movesLeft[name] ?: 0) <= 0) return false
+        val hero = game.characters.find { it.name == name } ?: return false
+        val from = hero.position ?: return false
+        if (!game.board.isFree(target)) return false
+        if (!GameEngine.atRange(from, target)) return false  // 4-neighbour only
+
+        // Mutate game state
+        if (!game.board.movePiece(hero, target)) return false
+
+        // Mirror to visible state immediately so Compose animates the slide
+        val idx = pieces.indexOfFirst { it.name == name }
+        if (idx >= 0) {
+            pieces[idx] = pieces[idx].copy(row = target.x, column = target.y)
+        }
+
+        // Record action + spend movement
+        if (name !in actedThisRound) actedThisRound.add(name)
+        movesLeft[name] = (movesLeft[name] ?: 0) - 1
+        log.add("$name${from} -> ${target}")
+
+        // Auto-deselect when out of moves
+        if ((movesLeft[name] ?: 0) <= 0) selectedHero = null
+        return true
+    }
+
+    /**
+     * Manually have the selected hero attack [targetName].
+     * The attack uses [com.tilewarden.core.Character.combat] so all the
+     * dice rolls, damage, stats and events flow through the same path
+     * as an AI-driven attack. The hero's remaining moves are consumed
+     * (matches the AI semantics).
+     */
+    suspend fun manualAttack(targetName: String) {
+        if (isAnimating || isOver) return
+        val name = selectedHero ?: return
+        val attacker = game.characters.find { it.name == name } ?: return
+        val defender = game.characters.find { it.name == targetName } ?: return
+        if (!attacker.isAlive || !defender.isAlive) return
+        if (!attacker.isEnemy(defender)) return
+        val ap = attacker.position; val dp = defender.position
+        if (ap == null || dp == null || !GameEngine.atRange(ap, dp)) return
+
+        // Mark and clear UI selection BEFORE running combat so the user
+        // gets immediate visual feedback.
+        if (name !in actedThisRound) actedThisRound.add(name)
+        movesLeft[name] = 0
+        selectedHero = null
+
+        // Combat publishes events; replay them.
+        isAnimating = true
+        try {
+            buffer.clear()
+            attacker.combat(defender, game)
+            replayBuffered()
+        } finally {
+            isAnimating = false
+        }
+    }
+
+    // ---- Internals ----
+
+    private fun resetMovesLeft() {
+        movesLeft.clear()
+        for (c in game.characters) {
+            if (c is Hero && c.isAlive) movesLeft[c.name] = c.moves
+        }
+    }
 
     private fun buildFreshGame(): Game {
         Dice.setSeed(seed)
@@ -161,9 +289,6 @@ class GameSession(
             applyEventToPieces(event)
             delay(durationFor(event))
         }
-        // The enclosing coroutineScope waits for fire-and-forget effect jobs
-        // (bubble cleanup, attack flash decay, dying piece removal) before
-        // returning — so a fresh nextRound never starts on top of stale fx.
     }
 
     private fun CoroutineScope.applyEventToPieces(event: GameEvent) {
@@ -209,9 +334,6 @@ class GameSession(
                 val name = event.character.name
                 if (name !in dyingPieces) dyingPieces.add(name)
                 launch {
-                    // Wait for the fade animation to play out, then remove
-                    // the piece for good. The dyingPieces flag stays on the
-                    // way out so the alpha animation continues to target 0.
                     delay(DEATH_MS)
                     pieces.removeAll { it.name == name }
                     dyingPieces.remove(name)
@@ -221,7 +343,7 @@ class GameSession(
                 isOver = true
                 winner = event.winner
             }
-            else -> { /* RoundStarted, RoundEnded, AttackResolved, AttackBlocked, GameStarted, PieceBlocked */ }
+            else -> { }
         }
     }
 
@@ -254,7 +376,6 @@ class GameSession(
     }
 }
 
-/** Composable factory: one [GameSession] per (seed) per parent composition. */
 @Composable
 fun rememberGameSession(seed: Long = 2026L): GameSession =
     remember(seed) { GameSession(seed) }

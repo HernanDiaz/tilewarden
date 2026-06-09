@@ -85,13 +85,19 @@ object GameEngine {
     /**
      * Iterate every live character once, in current order. Snapshot the
      * list first because characters can be removed mid-round when they die.
+     *
+     * @param skipNames characters whose AI turn should be skipped this round
+     *   (because the player already acted with them manually). Empty by
+     *   default — fully autonomous behaviour, identical to the original.
      */
-    fun resolveRound(game: Game) {
+    fun resolveRound(game: Game, skipNames: Set<String> = emptySet()) {
         game.notify(GameEvent.RoundStarted(game.currentRound))
         val turnOrder = game.characters.toList()
         for (c in turnOrder) {
             if (!opponentsLeft(game)) break
-            if (c.isAlive) c.resolveTurn(game)
+            if (!c.isAlive) continue
+            if (c.name in skipNames) continue
+            c.resolveTurn(game)
         }
         game.notify(GameEvent.RoundEnded(game.currentRound))
     }
