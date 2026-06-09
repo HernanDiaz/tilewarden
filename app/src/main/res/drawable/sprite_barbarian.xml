@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Barbarian: red-armoured warrior with a small helm. 16x16 pixel-art
+  expressed as filled <path> rects in a vector drawable so it stays sharp
+  at any board scale.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="16"
+    android:viewportHeight="16">
+
+    <!-- Helm crown -->
+    <path android:fillColor="#A03828" android:pathData="M5,1h6v3h-6z" />
+    <!-- Helm rim -->
+    <path android:fillColor="#5A1F18" android:pathData="M5,3h6v1h-6z" />
+    <!-- Face -->
+    <path android:fillColor="#D89A6E" android:pathData="M6,4h4v2h-4z" />
+    <!-- Eyes -->
+    <path android:fillColor="#1B0F08" android:pathData="M6,5h1v1h-1z" />
+    <path android:fillColor="#1B0F08" android:pathData="M9,5h1v1h-1z" />
+    <!-- Shoulders -->
+    <path android:fillColor="#A03828" android:pathData="M3,6h10v2h-10z" />
+    <!-- Chest armour -->
+    <path android:fillColor="#A03828" android:pathData="M4,8h8v3h-8z" />
+    <!-- Armour highlight (light strip) -->
+    <path android:fillColor="#C95040" android:pathData="M4,8h8v1h-8z" />
+    <!-- Belt -->
+    <path android:fillColor="#3A2010" android:pathData="M4,10h8v1h-8z" />
+    <!-- Skirt / tunic -->
+    <path android:fillColor="#5A2818" android:pathData="M4,11h8v1h-8z" />
+    <!-- Legs -->
+    <path android:fillColor="#3A2010" android:pathData="M5,12h2v3h-2z" />
+    <path android:fillColor="#3A2010" android:pathData="M9,12h2v3h-2z" />
+    <!-- Boots -->
+    <path android:fillColor="#1B0F08" android:pathData="M5,14h2v1h-2z" />
+    <path android:fillColor="#1B0F08" android:pathData="M9,14h2v1h-2z" />
+</vector>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mummy: humanoid wrapped in bandages. Cream over a slightly darker
+  shade with horizontal stripes for the wrappings.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="16"
+    android:viewportHeight="16">
+
+    <!-- Head wrap -->
+    <path android:fillColor="#E0D4A8" android:pathData="M5,1h6v5h-6z" />
+    <!-- Bandage stripe across head -->
+    <path android:fillColor="#9C8A58" android:pathData="M5,3h6v1h-6z" />
+    <!-- Bandage gap (eye slit, dark) -->
+    <path android:fillColor="#1B0F08" android:pathData="M6,4h1v1h-1z" />
+    <path android:fillColor="#1B0F08" android:pathData="M9,4h1v1h-1z" />
+    <!-- Body wrappings (light) -->
+    <path android:fillColor="#E0D4A8" android:pathData="M4,6h8v6h-8z" />
+    <!-- Bandage stripes -->
+    <path android:fillColor="#9C8A58" android:pathData="M4,7h8v1h-8z" />
+    <path android:fillColor="#9C8A58" android:pathData="M4,9h8v1h-8z" />
+    <path android:fillColor="#9C8A58" android:pathData="M4,11h8v1h-8z" />
+    <!-- Arms / trailing wraps -->
+    <path android:fillColor="#E0D4A8" android:pathData="M3,8h1v3h-1z" />
+    <path android:fillColor="#E0D4A8" android:pathData="M12,8h1v3h-1z" />
+    <!-- Legs -->
+    <path android:fillColor="#E0D4A8" android:pathData="M5,12h2v3h-2z" />
+    <path android:fillColor="#E0D4A8" android:pathData="M9,12h2v3h-2z" />
+    <!-- Bandage stripes on legs -->
+    <path android:fillColor="#9C8A58" android:pathData="M5,13h2v1h-2z" />
+    <path android:fillColor="#9C8A58" android:pathData="M9,13h2v1h-2z" />
+</vector>

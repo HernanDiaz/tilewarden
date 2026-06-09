@@ -26,7 +26,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -49,6 +52,11 @@ private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
  * valid-move and valid-attack overlays, "already acted" fading, plus the
  * VFX from milestone 4 (movement slide, attack flash, death fade,
  * floating damage labels).
+ *
+ * Pieces are drawn as 16x16 vector-drawable pixel-art sprites. The four
+ * built-in symbols ('B', 'D', 'G', 'M') map to sprite_{barbarian,dwarf,
+ * goblin,mummy}; any other symbol falls back to a coloured disc with the
+ * letter inside (forward-compatible if we add new character classes).
  */
 @Composable
 fun BoardCanvas(
@@ -77,6 +85,20 @@ fun BoardCanvas(
         color = symbolInk,
         fontWeight = FontWeight.Bold,
     )
+
+    // Load the four pixel sprites once at composition; reuse for every draw.
+    val barbarianPainter = painterResource(R.drawable.sprite_barbarian)
+    val dwarfPainter     = painterResource(R.drawable.sprite_dwarf)
+    val goblinPainter    = painterResource(R.drawable.sprite_goblin)
+    val mummyPainter     = painterResource(R.drawable.sprite_mummy)
+
+    fun painterFor(symbol: Char): Painter? = when (symbol) {
+        'B' -> barbarianPainter
+        'D' -> dwarfPainter
+        'G' -> goblinPainter
+        'M' -> mummyPainter
+        else -> null
+    }
 
     val animatedPieces: List<AnimatedPiece> = pieces.map { piece ->
         key(piece.name) {
@@ -129,6 +151,8 @@ fun BoardCanvas(
             val selectionBorderPx = borderPx * 3f
             val pieceRadius       = tileSizePx * 0.36f
             val emptyDotRadius    = tileSizePx * 0.06f
+            val spriteSize        = tileSizePx * 0.85f
+            val spriteInset       = (tileSizePx - spriteSize) / 2f
 
             // Grid + valid-move highlights.
             for (row in 0 until rows) {
@@ -166,7 +190,8 @@ fun BoardCanvas(
                 val cx = ap.column * tileSizePx + tileSizePx / 2f
                 val cy = ap.row    * tileSizePx + tileSizePx / 2f
 
-                // Valid-attack tint behind the disc.
+                // Valid-attack tint behind the piece — anchored on the logical
+                // tile, not on the animated centre, so the marker stays put.
                 if (piece.name in validAttackTargets) {
                     drawRect(
                         color = VALID_ATTACK_COLOR,
@@ -178,40 +203,68 @@ fun BoardCanvas(
                     )
                 }
 
-                drawCircle(
-                    color = piece.color.copy(alpha = alpha),
-                    radius = pieceRadius,
-                    center = Offset(cx, cy),
-                )
+                val painter = painterFor(piece.symbol)
+                if (painter != null) {
+                    // Sprite path: draw the vector pixel-art at 85% of the tile,
+                    // centred on the animated position.
+                    translate(
+                        left = cx - spriteSize / 2f,
+                        top  = cy - spriteSize / 2f,
+                    ) {
+                        with(painter) {
+                            draw(size = Size(spriteSize, spriteSize), alpha = alpha)
+                        }
+                    }
+                } else {
+                    // Fallback: subclass without a sprite yet. Disc + letter.
+                    drawCircle(
+                        color = piece.color.copy(alpha = alpha),
+                        radius = pieceRadius,
+                        center = Offset(cx, cy),
+                    )
+                    drawCircle(
+                        color = symbolInk.copy(alpha = alpha),
+                        radius = pieceRadius,
+                        center = Offset(cx, cy),
+                        style = Stroke(width = borderPx),
+                    )
+                    val layout = measurer.measure(
+                        AnnotatedString(piece.symbol.toString()),
+                        labelStyle,
+                    )
+                    drawText(
+                        textLayoutResult = layout,
+                        topLeft = Offset(
+                            cx - layout.size.width / 2f,
+                            cy - layout.size.height / 2f,
+                        ),
+                        alpha = alpha,
+                    )
+                }
 
+                // Selection / attack frame: rect around the whole tile so it
+                // reads like a grid highlight (matches the pixel-art aesthetic
+                // better than a floating circle).
                 val isAttacking = piece.name in attackingPieces
                 val isSelected  = piece.name == selectedHero
-                val outlineColor: Color
-                val outlineWidth: Float
-                when {
-                    isSelected  -> { outlineColor = SELECTION_BORDER_COLOR; outlineWidth = selectionBorderPx }
-                    isAttacking -> { outlineColor = ATTACK_BORDER_COLOR;    outlineWidth = attackBorderPx }
-                    else        -> { outlineColor = symbolInk;              outlineWidth = borderPx }
+                if (isSelected || isAttacking) {
+                    val outlineColor = if (isSelected) SELECTION_BORDER_COLOR
+                                       else            ATTACK_BORDER_COLOR
+                    val outlineWidth = if (isSelected) selectionBorderPx
+                                       else            attackBorderPx
+                    drawRect(
+                        color = outlineColor.copy(alpha = alpha),
+                        topLeft = Offset(
+                            piece.column * tileSizePx + outlineWidth / 2f,
+                            piece.row * tileSizePx + outlineWidth / 2f,
+                        ),
+                        size = Size(
+                            tileSizePx - outlineWidth,
+                            tileSizePx - outlineWidth,
+                        ),
+                        style = Stroke(width = outlineWidth),
+                    )
                 }
-                drawCircle(
-                    color = outlineColor.copy(alpha = alpha),
-                    radius = pieceRadius,
-                    center = Offset(cx, cy),
-                    style = Stroke(width = outlineWidth),
-                )
-
-                val layout = measurer.measure(
-                    AnnotatedString(piece.symbol.toString()),
-                    labelStyle,
-                )
-                drawText(
-                    textLayoutResult = layout,
-                    topLeft = Offset(
-                        cx - layout.size.width / 2f,
-                        cy - layout.size.height / 2f,
-                    ),
-                    alpha = alpha,
-                )
             }
         }
 
