@@ -63,16 +63,12 @@ internal fun renderOf(character: Character): PieceRender? {
     )
 }
 
-/**
- * Subclass tints in the pixel-art warm palette.
- * The actual values live in [com.tilewarden.app.ui.theme] so colour
- * decisions stay in one place.
- */
+/** Placeholder palette — replaced when we commit to a final visual theme. */
 private fun pieceColor(c: Character): Color = when (c) {
-    is Barbarian -> com.tilewarden.app.ui.theme.BarbarianTint
-    is Dwarf     -> com.tilewarden.app.ui.theme.DwarfTint
-    is Goblin    -> com.tilewarden.app.ui.theme.GoblinTint
-    is Mummy     -> com.tilewarden.app.ui.theme.MummyTint
-    is Hero      -> com.tilewarden.app.ui.theme.GoldBright
-    else         -> com.tilewarden.app.ui.theme.SurfaceBrown2
+    is Barbarian -> Color(0xFFE0B355)  // amber / brass
+    is Dwarf     -> Color(0xFFC07A3D)  // copper
+    is Goblin    -> Color(0xFF8FB04A)  // olive green
+    is Mummy     -> Color(0xFFE0D6C2)  // bandages
+    is Hero      -> Color(0xFFD4A04A)  // future hero default
+    else         -> Color(0xFF8C7B6A)  // future neutral / monster default
 }

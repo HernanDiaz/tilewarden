@@ -7,8 +7,8 @@
         takes over.
     -->
     <style name="Theme.Tilewarden" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#2A1A14</item>
-        <item name="android:navigationBarColor">#2A1A14</item>
-        <item name="android:windowBackground">#2A1A14</item>
+        <item name="android:statusBarColor">#1B1714</item>
+        <item name="android:navigationBarColor">#1B1714</item>
+        <item name="android:windowBackground">#1B1714</item>
     </style>
 </resources>

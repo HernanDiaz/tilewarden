@@ -26,7 +26,7 @@ internal fun SymbolDisc(
     color: Color,
     diameter: Dp = 28.dp,
 ) {
-    val ink = Color(0xFF2A1A14)
+    val ink = Color(0xFF1B1714)
     Box(
         modifier = Modifier
             .size(diameter)

@@ -38,11 +38,11 @@ import androidx.compose.ui.unit.sp
 import com.tilewarden.core.XYLocation
 
 private const val MOVE_ANIMATION_MS = 400
-private val ATTACK_BORDER_COLOR    = Color(0xFFE25D4A)              // terracotta
-private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE25D4A)              // terracotta
-private val SELECTION_BORDER_COLOR = Color(0xFFF0C969)              // gold bright
-private val VALID_MOVE_COLOR       = Color(0x667A9F5A)              // moss green tint
-private val VALID_ATTACK_COLOR     = Color(0x66E25D4A)              // terracotta tint
+private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
+private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE04A4A)
+private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)   // gold
+private val VALID_MOVE_COLOR       = Color(0x6685D67A)
+private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
 
 /**
  * 2D board with full interactivity: tap detection, selection highlight,
@@ -69,7 +69,7 @@ fun BoardCanvas(
     val tileFill   = MaterialTheme.colorScheme.surface
     val tileBorder = MaterialTheme.colorScheme.outline
     val emptyDot   = MaterialTheme.colorScheme.surfaceVariant
-    val symbolInk  = Color(0xFF2A1A14)   // same as BgDeep; black-on-piece reads warmly
+    val symbolInk  = Color(0xFF1B1714)
 
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(
