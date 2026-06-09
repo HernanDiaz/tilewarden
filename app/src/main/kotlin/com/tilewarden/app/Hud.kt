@@ -1,5 +1,8 @@
 package com.tilewarden.app
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -118,12 +122,25 @@ private fun SymbolDisc(symbol: Char, color: Color) {
 
 @Composable
 private fun HealthBar(ratio: Float) {
-    val barColor = when {
+    // Width animates smoothly when wounds are taken, instead of jumping.
+    val animatedRatio by animateFloatAsState(
+        targetValue = ratio,
+        animationSpec = tween(durationMillis = 400),
+        label = "health_ratio",
+    )
+    // Colour also cross-fades through the green -> amber -> red ramp.
+    val targetColor = when {
         ratio > 0.66f -> Color(0xFF7AA84A)  // green: healthy
         ratio > 0.33f -> Color(0xFFE0B355)  // amber: hurt
         ratio > 0f    -> Color(0xFFC0524A)  // red: critical
-        else          -> Color(0xFF6E2E2A)  // very dark red: dead/empty (shouldn't be visible — dead drop)
+        else          -> Color(0xFF6E2E2A)  // dark red: empty
     }
+    val animatedColor by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(durationMillis = 400),
+        label = "health_color",
+    )
+
     val track = MaterialTheme.colorScheme.surfaceVariant
     Box(
         modifier = Modifier
@@ -132,12 +149,11 @@ private fun HealthBar(ratio: Float) {
             .clip(RoundedCornerShape(3.dp))
             .background(track),
     ) {
-        // Fill — fraction is the health ratio.
         Box(
             modifier = Modifier
-                .fillMaxWidth(fraction = ratio)
+                .fillMaxWidth(fraction = animatedRatio)
                 .fillMaxHeight()
-                .background(barColor),
+                .background(animatedColor),
         )
     }
 }
