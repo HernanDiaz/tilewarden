@@ -184,10 +184,12 @@ fun BoardCanvas(
         }
     }
 
-    // Render grid: same width as the playable area (no left/right walls),
-    // two extra wall rows on top and two on the bottom.
+    // Render grid: same width as the playable area (no left/right walls).
+    // Top wall is 2 rows (remate + brick body); bottom wall is 1 row
+    // (brick body only). The lower remate strip would otherwise read as
+    // a black gap between the floor and the wall.
     val renderCols = columns
-    val renderRows = rows + 4
+    val renderRows = rows + 3
     val playRowOffset = 2  // top wall = 2 rows
     val playColOffset = 0  // no side walls
 
@@ -242,19 +244,21 @@ fun BoardCanvas(
             }
 
             // 2) Horizontal walls only — nothing to the left or right.
-            // Each wall is two tiles tall: a wall_top_mid remate strip
-            // sits on top of a wall_mid brick body. Both rows span the
-            // full board width.
             //
-            // Row 0:        wall_top_mid x cols      (top remate)
-            // Row 1:        wall_mid     x cols      (top body)
+            // Top wall: 2 tiles tall — wall_top_mid remate strip on top
+            // of a wall_mid brick body.
+            // Bottom wall: 1 tile tall — just the wall_mid brick body.
+            // Skipping the bottom remate avoids a black stripe between
+            // the floor and the lower wall (the remate's dark line lives
+            // at the TOP of the tile).
+            //
+            // Row 0:        wall_top_mid x cols   (top remate)
+            // Row 1:        wall_mid     x cols   (top body)
             // Rows 2..N+1:  playable floor
-            // Row N+2:      wall_top_mid x cols      (bottom remate)
-            // Row N+3:      wall_mid     x cols      (bottom body)
+            // Row N+2:      wall_mid     x cols   (bottom body)
             for (rc in 0 until renderCols) {
                 drawTile(wallTopMid, renderRow = 0,              renderCol = rc, tileSizePx = tileSizePx)
                 drawTile(wallMid,    renderRow = 1,              renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallTopMid, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
                 drawTile(wallMid,    renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
 
