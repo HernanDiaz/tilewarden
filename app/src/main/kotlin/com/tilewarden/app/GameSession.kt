@@ -14,6 +14,7 @@ import com.tilewarden.core.GameEngine
 import com.tilewarden.core.GameEvent
 import com.tilewarden.core.GameObserver
 import com.tilewarden.core.Hero
+import com.tilewarden.core.Monster
 import com.tilewarden.core.Side
 import com.tilewarden.core.XYLocation
 import kotlinx.coroutines.CoroutineScope
@@ -96,6 +97,14 @@ class GameSession(
     val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
     val log: SnapshotStateList<String> = mutableStateListOf()
+
+    /** Sum of initialBody across all heroes at game start. Constant per game. */
+    var initialHeroBody: Int by mutableStateOf(0)
+        private set
+
+    /** Sum of initialBody across all monsters at game start. Constant per game. */
+    var initialMonsterBody: Int by mutableStateOf(0)
+        private set
 
     val heroesAlive: Int get() = pieces.count { it.isHero && it.name !in dyingPieces }
     val monstersAlive: Int get() = pieces.count { !it.isHero && it.name !in dyingPieces }
@@ -277,9 +286,18 @@ class GameSession(
 
     private fun rebuildPiecesFromGame() {
         pieces.clear()
+        var heroSum = 0
+        var monsterSum = 0
         for (c in game.characters) {
             renderOf(c)?.let { pieces.add(it) }
+            when (c) {
+                is Hero    -> heroSum    += c.initialBody
+                is Monster -> monsterSum += c.initialBody
+                else       -> { /* neutral */ }
+            }
         }
+        initialHeroBody    = heroSum
+        initialMonsterBody = monsterSum
     }
 
     private suspend fun replayBuffered() = coroutineScope {

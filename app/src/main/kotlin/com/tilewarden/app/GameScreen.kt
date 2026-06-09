@@ -2,6 +2,7 @@ package com.tilewarden.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ fun GameScreen(
     onBackToMenu: () -> Unit = {},
 ) {
     var autoPlay by remember { mutableStateOf(false) }
+    var inspected: PieceRender? by remember { mutableStateOf(null) }
     val scope = rememberCoroutineScope()
 
     val round         = session.round
@@ -59,66 +61,90 @@ fun GameScreen(
         if (session.isOver) autoPlay = false
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Header(
-            round = round,
-            totalRounds = session.totalRounds,
-            heroesAlive = session.heroesAlive,
-            monstersAlive = session.monstersAlive,
-            selectedHero = selectedHero,
-            isOver = isOver,
-            winner = winner,
-        )
+    // Keep the inspector in sync: if the inspected piece dies / leaves the
+    // board, drop the overlay automatically.
+    LaunchedEffect(session.pieces.size, isAnimating) {
+        inspected?.let { snap ->
+            val current = session.pieces.firstOrNull { it.name == snap.name }
+            inspected = current  // null if it died; refreshed values otherwise
+        }
+    }
 
-        PanelCard {
-            BoardCanvas(
-                rows = session.boardRows,
-                columns = session.boardColumns,
-                pieces = session.pieces,
-                dyingPieces = session.dyingPieces,
-                attackingPieces = session.attackingPieces,
-                damageBubbles = session.damageBubbles,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Header(
+                round = round,
+                totalRounds = session.totalRounds,
+                heroesAlive = session.heroesAlive,
+                monstersAlive = session.monstersAlive,
                 selectedHero = selectedHero,
-                validMoves = validMoves,
-                validAttackTargets = attackTargets,
-                actedHeroes = session.actedThisRound,
-                onTileTap = { row, col ->
-                    handleTap(session, row, col, scope)
+                isOver = isOver,
+                winner = winner,
+            )
+
+            ScoreBoard(
+                pieces = session.pieces,
+                initialHeroBody = session.initialHeroBody,
+                initialMonsterBody = session.initialMonsterBody,
+            )
+
+            PanelCard {
+                BoardCanvas(
+                    rows = session.boardRows,
+                    columns = session.boardColumns,
+                    pieces = session.pieces,
+                    dyingPieces = session.dyingPieces,
+                    attackingPieces = session.attackingPieces,
+                    damageBubbles = session.damageBubbles,
+                    selectedHero = selectedHero,
+                    validMoves = validMoves,
+                    validAttackTargets = attackTargets,
+                    actedHeroes = session.actedThisRound,
+                    onTileTap = { row, col ->
+                        handleTap(session, row, col, scope)
+                    },
+                    onTileLongPress = { row, col ->
+                        inspected = session.pieces.firstOrNull {
+                            it.row == row && it.column == col
+                        }
+                    },
+                )
+            }
+
+            EventLogPanel(
+                log = session.log,
+                modifier = Modifier.weight(1f, fill = true),
+            )
+
+            Controls(
+                autoPlay = autoPlay,
+                isOver = isOver,
+                isAnimating = isAnimating,
+                onNext = { scope.launch { session.nextRound() } },
+                onToggleAuto = { autoPlay = !autoPlay },
+                onReset = {
+                    autoPlay = false
+                    session.reset()
+                },
+                onMenu = {
+                    autoPlay = false
+                    onBackToMenu()
                 },
             )
         }
 
-        HudPanel(
-            pieces = session.pieces,
-            actedHeroes = session.actedThisRound,
-        )
-
-        EventLogPanel(
-            log = session.log,
-            modifier = Modifier.weight(1f, fill = true),
-        )
-
-        Controls(
-            autoPlay = autoPlay,
-            isOver = isOver,
-            isAnimating = isAnimating,
-            onNext = { scope.launch { session.nextRound() } },
-            onToggleAuto = { autoPlay = !autoPlay },
-            onReset = {
-                autoPlay = false
-                session.reset()
-            },
-            onMenu = {
-                autoPlay = false
-                onBackToMenu()
-            },
-        )
+        inspected?.let { piece ->
+            PieceInspector(
+                piece = piece,
+                onDismiss = { inspected = null },
+            )
+        }
     }
 }
 
@@ -204,6 +230,12 @@ private fun Header(
                     "an orange enemy to attack, or the hero again to cancel)",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
+            )
+        } else if (!isOver) {
+            Text(
+                text = "Tip: long-press any piece for its stats.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

@@ -63,6 +63,7 @@ fun BoardCanvas(
     validAttackTargets: Set<String>,
     actedHeroes: List<String>,
     onTileTap: (row: Int, column: Int) -> Unit,
+    onTileLongPress: (row: Int, column: Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val tileFill   = MaterialTheme.colorScheme.surface
@@ -103,12 +104,20 @@ fun BoardCanvas(
             .fillMaxWidth()
             .aspectRatio(columns.toFloat() / rows.toFloat())
             .pointerInput(rows, columns) {
-                detectTapGestures { offset ->
-                    val tileSizePx = size.width.toFloat() / columns
-                    val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
-                    val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
-                    onTileTap(row, col)
-                }
+                detectTapGestures(
+                    onTap = { offset ->
+                        val tileSizePx = size.width.toFloat() / columns
+                        val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
+                        val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
+                        onTileTap(row, col)
+                    },
+                    onLongPress = { offset ->
+                        val tileSizePx = size.width.toFloat() / columns
+                        val col = (offset.x / tileSizePx).toInt().coerceIn(0, columns - 1)
+                        val row = (offset.y / tileSizePx).toInt().coerceIn(0, rows - 1)
+                        onTileLongPress(row, col)
+                    },
+                )
             },
     ) {
         val tileSize: Dp = maxWidth / columns

@@ -13,7 +13,8 @@ import com.tilewarden.core.Mummy
  * Plain-data view of a single character at one moment.
  *
  * Mutated piece-by-piece during event replay (see [GameSession]) so the
- * Canvas and HUD recompose only for the entity that actually changed.
+ * Canvas and other consumers recompose only for the entity that actually
+ * changed.
  */
 @Immutable
 data class PieceRender(
@@ -25,6 +26,11 @@ data class PieceRender(
     val body: Int,
     val initialBody: Int,
     val isHero: Boolean,
+    val moves: Int,
+    val attack: Int,
+    val defense: Int,
+    val weaponName: String? = null,
+    val weaponDice: Int? = null,
 ) {
     /** 0..1, the proportion of body remaining. */
     val healthRatio: Float
@@ -39,6 +45,7 @@ data class PieceRender(
  */
 internal fun renderOf(character: Character): PieceRender? {
     val pos = character.position ?: return null
+    val weapon = (character as? Hero)?.weapon
     return PieceRender(
         row = pos.x,
         column = pos.y,
@@ -48,6 +55,11 @@ internal fun renderOf(character: Character): PieceRender? {
         body = character.body,
         initialBody = character.initialBody,
         isHero = character is Hero,
+        moves = character.moves,
+        attack = character.attack,
+        defense = character.defense,
+        weaponName = weapon?.name,
+        weaponDice = weapon?.attackDice,
     )
 }
 
