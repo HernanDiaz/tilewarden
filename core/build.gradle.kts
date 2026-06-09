@@ -5,6 +5,14 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("jvm")
+    application
+}
+
+application {
+    // Entry point of the runnable demo (./gradlew :core:run).
+    // The Kotlin file `TilewardenDemo.kt` with a top-level `main()`
+    // compiles to a class named `TilewardenDemoKt`.
+    mainClass.set("com.tilewarden.core.TilewardenDemoKt")
 }
 
 java {
