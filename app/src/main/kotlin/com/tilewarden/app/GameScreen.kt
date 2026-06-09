@@ -83,7 +83,6 @@ fun GameScreen(
                 totalRounds = session.totalRounds,
                 heroesAlive = session.heroesAlive,
                 monstersAlive = session.monstersAlive,
-                selectedHero = selectedHero,
                 isOver = isOver,
                 winner = winner,
             )
@@ -197,7 +196,6 @@ private fun Header(
     totalRounds: Int,
     heroesAlive: Int,
     monstersAlive: Int,
-    selectedHero: String?,
     isOver: Boolean,
     winner: Side?,
 ) {
@@ -225,20 +223,6 @@ private fun Header(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        if (selectedHero != null) {
-            Text(
-                text = "Selected: $selectedHero  (tap a green square to move, " +
-                    "an orange enemy to attack, or the hero again to cancel)",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        } else if (!isOver) {
-            Text(
-                text = "Tip: long-press any piece for its stats.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 
