@@ -36,16 +36,16 @@ class Game(
 
         repeat(numHeroes) { idx ->
             val hero: Hero = if (Dice.roll() % 2 == 0)
-                Barbarian("Barbarian$idx", NO_PLAYER)
+                Barbarian("Barbarian $idx", NO_PLAYER)
             else
-                Dwarf("Dwarf$idx", NO_PLAYER)
+                Dwarf("Dwarf $idx", NO_PLAYER)
             _characters.add(hero)
         }
         repeat(numMonsters) { idx ->
             val monster: Monster = if (Dice.roll() % 2 == 0)
-                Mummy("Mummy$idx")
+                Mummy("Mummy $idx")
             else
-                Goblin("Goblin$idx")
+                Goblin("Goblin $idx")
             _characters.add(monster)
         }
     }
