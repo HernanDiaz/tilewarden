@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.AnnotatedString
@@ -195,16 +196,27 @@ fun BoardCanvas(
     val playRowOffset = 2  // top wall = 2 rows
     val playColOffset = 0  // no side walls
 
+    // wall_top_mid's top 6 of 16 rows are transparent. To stop that band
+    // from showing as a black strip above the top remate, we shift the
+    // whole canvas content up by that amount and crop the Box vertically
+    // by the same amount.
+    val transparentBandFraction = 6f / 16f
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(renderCols.toFloat() / renderRows.toFloat())
+            .aspectRatio(renderCols.toFloat() / (renderRows.toFloat() - transparentBandFraction))
             .pointerInput(rows, columns) {
                 detectTapGestures(
                     onTap = { offset ->
                         val tileSizePx = size.width.toFloat() / renderCols
+                        // The Box is shorter than renderRows * tileSizePx by
+                        // transparentBandFraction. The drawing is shifted up
+                        // by the same amount, so add it back to map taps to
+                        // logical render rows.
+                        val shift = tileSizePx * transparentBandFraction
                         val rc = (offset.x / tileSizePx).toInt()
-                        val rr = (offset.y / tileSizePx).toInt()
+                        val rr = ((offset.y + shift) / tileSizePx).toInt()
                         val playCol = rc - playColOffset
                         val playRow = rr - playRowOffset
                         if (playRow in 0 until rows && playCol in 0 until columns) {
@@ -213,8 +225,9 @@ fun BoardCanvas(
                     },
                     onLongPress = { offset ->
                         val tileSizePx = size.width.toFloat() / renderCols
+                        val shift = tileSizePx * transparentBandFraction
                         val rc = (offset.x / tileSizePx).toInt()
-                        val rr = (offset.y / tileSizePx).toInt()
+                        val rr = ((offset.y + shift) / tileSizePx).toInt()
                         val playCol = rc - playColOffset
                         val playRow = rr - playRowOffset
                         if (playRow in 0 until rows && playCol in 0 until columns) {
@@ -228,10 +241,13 @@ fun BoardCanvas(
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val tileSizePx = size.width / renderCols
+            val canvasShift = tileSizePx * transparentBandFraction
             val borderPx          = (tileSizePx * 0.04f).coerceAtLeast(1f)
             val attackBorderPx    = borderPx * 2.5f
             val selectionBorderPx = borderPx * 3f
             val pieceRadius       = tileSizePx * 0.36f
+
+            translate(top = -canvasShift) {
 
             // 1) Floor — every playable cell gets a floor tile based on its hash.
             for (r in 0 until rows) {
@@ -386,13 +402,19 @@ fun BoardCanvas(
                     )
                 }
             }
+            } // close translate(top = -canvasShift)
         }
 
-        // Damage bubbles — positioned in playable coordinates, so offset
-        // by 1 cell in both axes to land on top of the right tile.
+        // Damage bubbles — positioned in playable coordinates, with the
+        // same vertical shift applied so they line up with the on-canvas
+        // sprites.
         for (bubble in damageBubbles) {
             key(bubble.id) {
-                DamageBubbleOverlay(bubble = bubble, tileSize = tileSize)
+                DamageBubbleOverlay(
+                    bubble = bubble,
+                    tileSize = tileSize,
+                    yShift = tileSize * transparentBandFraction,
+                )
             }
         }
     }
@@ -426,7 +448,11 @@ private data class AnimatedPiece(
 )
 
 @Composable
-private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
+private fun DamageBubbleOverlay(
+    bubble: DamageBubble,
+    tileSize: Dp,
+    yShift: Dp,
+) {
     val anim = remember { Animatable(0f) }
     LaunchedEffect(bubble.id) {
         anim.animateTo(
@@ -435,9 +461,9 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
         )
     }
     val progress = anim.value
-    // +1 offset on both axes so bubbles land in the playable area, not on
-    // the wall perimeter.
-    val baseTopOffsetDp = tileSize * (bubble.row + 2) + tileSize * 0.05f
+    // +2 row offset for the top wall; minus yShift to match the canvas's
+    // upward translation.
+    val baseTopOffsetDp = tileSize * (bubble.row + 2) + tileSize * 0.05f - yShift
     val rise = tileSize * 0.8f * progress
 
     Text(
