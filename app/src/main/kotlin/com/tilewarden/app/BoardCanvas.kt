@@ -16,39 +16,19 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
-import com.tilewarden.core.Barbarian
-import com.tilewarden.core.Character
-import com.tilewarden.core.Dwarf
-import com.tilewarden.core.Goblin
-import com.tilewarden.core.Hero
-import com.tilewarden.core.Mummy
 
 /**
- * 2D Canvas rendering of the game board.
+ * 2D rendering of a [BoardSnapshot].
  *
- * Replaces the ASCII text view from milestone 2. Each cell is a filled
- * square with a thin border; each character is a coloured disc with its
- * [Character.symbol] drawn in the centre.
- *
- * The visual style here is intentionally neutral — flat colours, no
- * texture, no sprite art — so we can lock in the rendering pipeline now
- * and swap to real sprites once we commit to a visual theme.
+ * Pure data-in → pixels-out: the Composable depends only on its [snapshot]
+ * parameter, so Compose recomposes it (and the Canvas redraws) exactly when
+ * the snapshot's value changes. No engine references leak in.
  */
 @Composable
 fun BoardCanvas(
-    session: GameSession,
+    snapshot: BoardSnapshot,
     modifier: Modifier = Modifier,
 ) {
-    // Read observable state up front so the Canvas recomposes every time the
-    // game advances. The values themselves aren't used — the read is what
-    // subscribes us to invalidations.
-    @Suppress("UNUSED_VARIABLE")
-    val r = session.round
-
-    val game = session.game
-    val rows = game.board.rows
-    val cols = game.board.columns
-
     val tileFill   = MaterialTheme.colorScheme.surface
     val tileBorder = MaterialTheme.colorScheme.outline
     val emptyDot   = MaterialTheme.colorScheme.surfaceVariant
@@ -64,8 +44,10 @@ fun BoardCanvas(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(cols.toFloat() / rows.toFloat()),
+            .aspectRatio(snapshot.columns.toFloat() / snapshot.rows.toFloat()),
     ) {
+        val cols = snapshot.columns
+        val rows = snapshot.rows
         val tileSize = size.width / cols
         val borderPx = (tileSize * 0.04f).coerceAtLeast(1f)
         val pieceRadius = tileSize * 0.36f
@@ -83,7 +65,6 @@ fun BoardCanvas(
                     size = cellSize,
                     style = Stroke(width = borderPx),
                 )
-                // Subtle centre dot on empty cells so the grid reads as a board.
                 drawCircle(
                     color = emptyDot,
                     radius = emptyDotRadius,
@@ -95,15 +76,13 @@ fun BoardCanvas(
             }
         }
 
-        // Characters: column is x on the board, row is y; in screen space we
-        // map board.row -> screen.y and board.column -> screen.x.
-        for (c in game.characters) {
-            val pos = c.position ?: continue
-            val cx = pos.y * tileSize + tileSize / 2f
-            val cy = pos.x * tileSize + tileSize / 2f
+        // Pieces — board.row maps to screen.y, board.column maps to screen.x.
+        for (piece in snapshot.pieces) {
+            val cx = piece.column * tileSize + tileSize / 2f
+            val cy = piece.row    * tileSize + tileSize / 2f
 
             drawCircle(
-                color = pieceColor(c),
+                color = piece.color,
                 radius = pieceRadius,
                 center = Offset(cx, cy),
             )
@@ -114,9 +93,7 @@ fun BoardCanvas(
                 style = Stroke(width = borderPx),
             )
 
-            // Symbol letter, centred on the disc.
-            val text = c.symbol.toString()
-            val layout = measurer.measure(AnnotatedString(text), labelStyle)
+            val layout = measurer.measure(AnnotatedString(piece.symbol.toString()), labelStyle)
             drawText(
                 textLayoutResult = layout,
                 topLeft = Offset(
@@ -126,14 +103,4 @@ fun BoardCanvas(
             )
         }
     }
-}
-
-/** Placeholder palette — replaced when we commit to a final visual theme. */
-private fun pieceColor(c: Character): Color = when (c) {
-    is Barbarian -> Color(0xFFE0B355)  // amber / brass
-    is Dwarf     -> Color(0xFFC07A3D)  // copper
-    is Goblin    -> Color(0xFF8FB04A)  // olive green
-    is Mummy     -> Color(0xFFE0D6C2)  // bandages
-    is Hero      -> Color(0xFFD4A04A)  // future hero default
-    else         -> Color(0xFF8C7B6A)  // future neutral / monster default
 }

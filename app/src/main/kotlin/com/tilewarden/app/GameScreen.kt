@@ -40,11 +40,26 @@ private const val AUTO_PLAY_DELAY_MS = 600L
 fun GameScreen(session: GameSession) {
     var autoPlay by remember { mutableStateOf(false) }
 
+    // ---- Subscribe to every observable on the session up front. ----
+    // Reading them HERE establishes the Compose-state subscription on the
+    // GameScreen scope, which guarantees that any tick of the engine
+    // recomposes the whole screen — and therefore recomputes the
+    // remembered snapshots below.
+    val round         = session.round
+    val isOver        = session.isOver
+    val winner        = session.winner
+    val totalRounds   = session.totalRounds
+
+    // Snapshots — re-derived only when the round advances. Their data-class
+    // equality means Compose will skip work if nothing actually changed.
+    val boardSnapshot = remember(round) { BoardSnapshot.from(session.game) }
+    val charactersText = remember(round) { session.charactersText }
+
     // Auto-play coroutine: while autoPlay is true and the game isn't over,
     // step one round every AUTO_PLAY_DELAY_MS.
-    LaunchedEffect(autoPlay, session.isOver) {
-        if (autoPlay && !session.isOver) {
-            while (autoPlay && !session.isOver) {
+    LaunchedEffect(autoPlay, isOver) {
+        if (autoPlay && !isOver) {
+            while (autoPlay && !isOver) {
                 session.nextRound()
                 delay(AUTO_PLAY_DELAY_MS)
             }
@@ -60,19 +75,19 @@ fun GameScreen(session: GameSession) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Header(
-            round = session.round,
-            totalRounds = session.totalRounds,
-            heroesAlive = session.heroesAlive,
-            monstersAlive = session.monstersAlive,
-            isOver = session.isOver,
-            winner = session.winner,
+            round = round,
+            totalRounds = totalRounds,
+            heroesAlive = boardSnapshot.heroesAlive,
+            monstersAlive = boardSnapshot.monstersAlive,
+            isOver = isOver,
+            winner = winner,
         )
 
         PanelCard {
-            BoardCanvas(session = session)
+            BoardCanvas(snapshot = boardSnapshot)
         }
 
-        CharactersPanel(text = session.charactersText)
+        CharactersPanel(text = charactersText)
 
         EventLogPanel(
             log = session.log,
@@ -81,7 +96,7 @@ fun GameScreen(session: GameSession) {
 
         Controls(
             autoPlay = autoPlay,
-            isOver = session.isOver,
+            isOver = isOver,
             onNext = { session.nextRound() },
             onToggleAuto = { autoPlay = !autoPlay },
             onReset = {
