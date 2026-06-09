@@ -86,10 +86,15 @@ fun GameScreen(
     // Auto-advance once every alive hero has fully spent their turn. Manual
     // play turns into something like: tap heroes, move them, see the AI
     // round resolve, repeat — without ever needing to press Next round.
+    //
+    // nextRound() is dispatched into `scope` (the screen-level coroutine
+    // scope), NOT awaited inside the LaunchedEffect. If we awaited it here
+    // the effect would cancel mid-call as soon as nextRound mutated any of
+    // the keys (pieces.size, actedThisRound.size, isAnimating), interrupting
+    // resolveRound + replayBuffered halfway through.
     LaunchedEffect(
         session.actedThisRound.size,
         session.pieces.size,
-        session.isAnimating,
         session.isOver,
         autoPlay,
     ) {
@@ -99,9 +104,9 @@ fun GameScreen(
         if (aliveHeroes.all { it.name in session.actedThisRound }) {
             delay(600)
             // Re-check after the delay: the player might have hit Reset
-            // or pressed something during the wait.
-            if (!session.isAnimating && !session.isOver) {
-                session.nextRound()
+            // or the autoplay loop might have started in the meantime.
+            if (!session.isAnimating && !session.isOver && !autoPlay) {
+                scope.launch { session.nextRound() }
             }
         }
     }
