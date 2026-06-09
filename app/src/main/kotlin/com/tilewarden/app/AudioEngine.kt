@@ -1,11 +1,15 @@
 package com.tilewarden.app
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.os.Handler
-import android.os.Looper
+import android.media.SoundPool
 import androidx.compose.runtime.mutableStateOf
+import java.io.BufferedOutputStream
+import java.io.DataOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -27,26 +31,29 @@ enum class SoundId {
 }
 
 /**
- * Plays short 8-bit-feel sound effects synthesised in code at construction
- * time, plus a low dungeon-drone ambient loop. No external audio assets, no
- * resource files — every sample is rendered into 16-bit PCM (mono, 22050
- * Hz) by the `synthXxx` helpers and cached.
+ * Plays short 8-bit-feel sound effects and a low dungeon-drone ambient loop.
  *
- * SFX: [play] spins up a fresh [AudioTrack] in `MODE_STATIC`, writes the
- * whole buffer in one shot, fires `play()`, and self-releases on the
- * playback marker. Cheap enough for the cadence of a turn-based replay
- * without juggling a pool.
+ * Two distinct pipelines:
  *
- * Ambient: [setAmbientActive] (typically called from the game screen's
- * `DisposableEffect`) owns a single persistent looping `AudioTrack`. The
- * loop buffer is 8 seconds long; every tonal component is a multiple of
- * 0.125 Hz so cycles close exactly at the wrap-around, hiding any click.
+ * - **SFX**: each `synthXxx` helper renders a 16-bit mono PCM buffer; on
+ *   construction those buffers are written to `cacheDir/sfx_*.wav` and
+ *   loaded into a single [SoundPool]. [play] just delegates to
+ *   `soundPool.play`. SoundPool manages its own stream pool, so there's
+ *   no AudioTrack leak risk — the previous per-SFX `AudioTrack` strategy
+ *   was unreliable (slots accumulated across rounds until the HAL refused
+ *   new tracks).
  *
- * [muted] is Compose-observable. Flipping it to true silences SFX AND
+ * - **Ambient**: a single 8-second drone buffer played by a persistent
+ *   [AudioTrack] in `MODE_STATIC` with `setLoopPoints(0, n, -1)`. SoundPool
+ *   isn't a great fit for an indefinitely-looping background drone, and
+ *   one persistent track is trivial to manage. [isAmbientPlaying] lets a
+ *   watchdog detect HAL evictions and re-arm.
+ *
+ * [muted] is Compose-observable. Flipping it to true silences SFX *and*
  * suspends the ambient; flipping it back resumes ambient if a previous
  * [setAmbientActive] call asked for it.
  */
-class AudioEngine {
+class AudioEngine(context: Context) {
 
     private val _muted = mutableStateOf(false)
     var muted: Boolean
@@ -54,8 +61,13 @@ class AudioEngine {
         set(value) {
             if (_muted.value == value) return
             _muted.value = value
-            if (value) stopAmbient()
-            else if (ambientWanted) startAmbient()
+            if (value) {
+                stopAmbient()
+                soundPool.autoPause()
+            } else {
+                soundPool.autoResume()
+                if (ambientWanted) startAmbient()
+            }
         }
 
     /** True iff the caller has asked for ambient to be on; honoured as long
@@ -63,73 +75,41 @@ class AudioEngine {
     private var ambientWanted: Boolean = false
     private var ambientTrack: AudioTrack? = null
 
-    private val pcm: Map<SoundId, ShortArray> = mapOf(
-        SoundId.ATTACK_SWING to synthAttackSwing(),
-        SoundId.HIT          to synthHit(),
-        SoundId.BLOCK        to synthBlock(),
-        SoundId.DEATH        to synthDeath(),
-        SoundId.VICTORY      to synthVictory(),
-        SoundId.DEFEAT       to synthDefeat(),
-        SoundId.STEP         to synthStep(),
-    )
-
     private val ambientPcm: ShortArray = synthAmbientLoop()
 
-    /** Main-looper handler used to schedule deterministic release() calls
-     *  after each SFX is done playing. We deliberately do NOT rely on
-     *  AudioTrack's setNotificationMarkerPosition callback — in practice
-     *  it's unreliable when the track is built from a coroutine
-     *  dispatcher, which leaks slots and eventually silences everything. */
-    private val callbackHandler = Handler(Looper.getMainLooper())
-
-    fun play(id: SoundId) {
-        if (muted) return
-        val samples = pcm[id] ?: return
-        // Audio failures must NEVER interrupt the game-state mutations
-        // around the call site. Swallow any exception (rare: out-of-memory
-        // on the audio HAL, resource exhaustion, etc.) and move on.
-        try {
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_GAME)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(samples.size * 2)
-                .setTransferMode(AudioTrack.MODE_STATIC)
+    private val soundPool: SoundPool = SoundPool.Builder()
+        .setMaxStreams(8)
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
-            track.write(samples, 0, samples.size)
-            track.play()
-            // Deterministic release: schedule stop+release for slightly after
-            // the sample ends. Doesn't depend on marker listeners firing,
-            // which historically have leaked tracks on coroutine threads.
-            val durMs = samples.size * 1000L / SAMPLE_RATE + 150L
-            callbackHandler.postDelayed({
-                try { track.stop() }   catch (_: Throwable) {}
-                try { track.release() } catch (_: Throwable) {}
-            }, durMs)
-        } catch (_: Throwable) {
-            // Couldn't allocate / play. The game logic carries on regardless.
+        )
+        .build()
+
+    /** SoundId → SoundPool sample id (handed back by [SoundPool.load]). */
+    private val sfxIds: Map<SoundId, Int>
+
+    init {
+        // Materialise every SFX as a WAV in cacheDir and hand it to the pool.
+        // Files are deterministic and small (<50 KB each); rewriting on every
+        // launch is fine and keeps the code stateless.
+        val cacheDir = context.cacheDir
+        sfxIds = SoundId.entries.associateWith { id ->
+            val file = File(cacheDir, "sfx_${id.name}.wav")
+            writeWav(file, synthFor(id))
+            soundPool.load(file.absolutePath, 1)
         }
     }
 
-    /** True iff the persistent ambient track is currently live. Used by the
-     *  game screen to re-arm ambient if the audio HAL evicted it (which can
-     *  happen under transient pressure even when we manage our own tracks). */
-    fun isAmbientPlaying(): Boolean {
-        val t = ambientTrack ?: return false
-        return try {
-            t.playState == AudioTrack.PLAYSTATE_PLAYING
+    fun play(id: SoundId) {
+        if (muted) return
+        val sampleId = sfxIds[id] ?: return
+        // play returns 0 on failure (e.g. sample still loading); that's fine,
+        // we just drop the SFX. Throwing must never propagate up.
+        try {
+            soundPool.play(sampleId, 1f, 1f, /*priority*/ 1, /*loop*/ 0, /*rate*/ 1f)
         } catch (_: Throwable) {
-            false
         }
     }
 
@@ -143,6 +123,18 @@ class AudioEngine {
         ambientWanted = active
         if (active && !muted) startAmbient()
         else if (!active) stopAmbient()
+    }
+
+    /** True iff the persistent ambient track is currently live. Used by the
+     *  game screen to re-arm ambient if the audio HAL evicted it (which can
+     *  happen under transient pressure even when we manage our own tracks). */
+    fun isAmbientPlaying(): Boolean {
+        val t = ambientTrack ?: return false
+        return try {
+            t.playState == AudioTrack.PLAYSTATE_PLAYING
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun startAmbient() {
@@ -167,12 +159,10 @@ class AudioEngine {
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
             track.write(samples, 0, samples.size)
-            // Loop the whole buffer forever (-1).
-            track.setLoopPoints(0, samples.size, -1)
+            track.setLoopPoints(0, samples.size, -1)  // forever
             track.play()
             ambientTrack = track
         } catch (_: Throwable) {
-            // Ambient is decorative; if it can't start we silently skip it.
             ambientTrack = null
         }
     }
@@ -186,7 +176,58 @@ class AudioEngine {
         ambientTrack = null
     }
 
+    // ---- WAV writer ----
+
+    /** Minimal RIFF/WAVE writer for 16-bit signed-PCM mono at [SAMPLE_RATE].
+     *  Used to materialise synthesised buffers for [SoundPool.load]. */
+    private fun writeWav(file: File, samples: ShortArray) {
+        val numChannels = 1
+        val bitsPerSample = 16
+        val byteRate = SAMPLE_RATE * numChannels * bitsPerSample / 8
+        val blockAlign = numChannels * bitsPerSample / 8
+        val dataSize = samples.size * 2
+        val riffSize = 36 + dataSize
+        DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { out ->
+            out.writeBytes("RIFF")
+            out.writeIntLE(riffSize)
+            out.writeBytes("WAVE")
+            out.writeBytes("fmt ")
+            out.writeIntLE(16)                          // PCM subchunk size
+            out.writeShortLE(1)                         // PCM format
+            out.writeShortLE(numChannels)
+            out.writeIntLE(SAMPLE_RATE)
+            out.writeIntLE(byteRate)
+            out.writeShortLE(blockAlign)
+            out.writeShortLE(bitsPerSample)
+            out.writeBytes("data")
+            out.writeIntLE(dataSize)
+            for (s in samples) out.writeShortLE(s.toInt())
+        }
+    }
+
+    private fun DataOutputStream.writeIntLE(v: Int) {
+        writeByte(v and 0xFF)
+        writeByte((v ushr 8) and 0xFF)
+        writeByte((v ushr 16) and 0xFF)
+        writeByte((v ushr 24) and 0xFF)
+    }
+
+    private fun DataOutputStream.writeShortLE(v: Int) {
+        writeByte(v and 0xFF)
+        writeByte((v ushr 8) and 0xFF)
+    }
+
     // ---- Render helpers ----
+
+    private fun synthFor(id: SoundId): ShortArray = when (id) {
+        SoundId.ATTACK_SWING -> synthAttackSwing()
+        SoundId.HIT          -> synthHit()
+        SoundId.BLOCK        -> synthBlock()
+        SoundId.DEATH        -> synthDeath()
+        SoundId.VICTORY      -> synthVictory()
+        SoundId.DEFEAT       -> synthDefeat()
+        SoundId.STEP         -> synthStep()
+    }
 
     /** Quantise a -1..1 sample into a 16-bit signed value with 6 dB headroom
      *  so summed components don't clip. */
@@ -204,36 +245,28 @@ class AudioEngine {
         return out
     }
 
-    /** Square wave at `freq` Hz, range ±1. */
     private fun square(t: Double, freq: Double): Double =
         if (sin(2 * PI * freq * t) >= 0) 1.0 else -1.0
 
-    /** Sine wave at `freq` Hz, range ±1. */
     private fun sineW(t: Double, freq: Double): Double = sin(2 * PI * freq * t)
 
-    /** White noise, range ±1. */
     private fun noiseW(): Double = Random.nextDouble() * 2 - 1
 
-    /** Exponential decay from 1 at t=0 toward 0 at t=dur. `k` controls
-     *  steepness — higher k means a snappier tail. */
     private fun decay(t: Double, dur: Double, k: Double = 4.0): Double =
         exp(-t * k / dur)
 
     // ---- Concrete SFX ----
 
-    /** Whoosh: noise burst + descending sine sweep, ~120 ms. */
     private fun synthAttackSwing(): ShortArray = render(120) { t ->
         val env = decay(t, 0.12, 5.0)
         noiseW() * env * 0.6 + sineW(t, 600.0 - 4500.0 * t) * env * 0.25
     }
 
-    /** Thud: low square + noise impact, ~150 ms. */
     private fun synthHit(): ShortArray = render(150) { t ->
         val env = decay(t, 0.15, 6.0)
         square(t, 90.0) * env * 0.55 + noiseW() * env * 0.35
     }
 
-    /** Clink: two short metallic pings spaced 60 ms apart, ~180 ms total. */
     private fun synthBlock(): ShortArray = render(180) { t ->
         val a = if (t < 0.05) sineW(t, 1900.0) * decay(t, 0.05, 8.0) * 0.5 else 0.0
         val b = if (t in 0.06..0.18) sineW(t, 1300.0) * decay(t - 0.06, 0.12, 6.0) * 0.4
@@ -241,30 +274,23 @@ class AudioEngine {
         a + b
     }
 
-    /** Sinking square-wave tone with a noise tail — character down, ~400 ms. */
     private fun synthDeath(): ShortArray = render(400) { t ->
         val env = decay(t, 0.4, 4.0)
-        val pitch = 220.0 * exp(-t * 3.5)  // 220 Hz down to a sub-audible rumble
+        val pitch = 220.0 * exp(-t * 3.5)
         square(t, pitch) * env * 0.55 + noiseW() * env * 0.15
     }
 
-    /** Major ascending arpeggio: C5 E5 G5 C6. */
     private fun synthVictory(): ShortArray =
         concatNotes(doubleArrayOf(523.25, 659.25, 783.99, 1046.50), noteMs = 110)
 
-    /** Minor descending arpeggio: C5 A4 F4 C4. */
     private fun synthDefeat(): ShortArray =
         concatNotes(doubleArrayOf(523.25, 440.0, 349.23, 261.63), noteMs = 140)
 
-    /** Soft footstep: noise burst with a low pop, ~45 ms. Volume kept low so
-     *  it doesn't fight the swoosh / hit cluster during a multi-step replay. */
     private fun synthStep(): ShortArray = render(45) { t ->
         val env = decay(t, 0.04, 8.0)
         noiseW() * env * 0.35 + sineW(t, 80.0) * env * 0.25
     }
 
-    /** Render a sequence of square-wave notes back to back, each with its own
-     *  decay envelope. Used for VICTORY / DEFEAT jingles. */
     private fun concatNotes(notes: DoubleArray, noteMs: Int): ShortArray {
         val noteSamples = SAMPLE_RATE * noteMs / 1000
         val out = ShortArray(notes.size * noteSamples)
@@ -283,34 +309,28 @@ class AudioEngine {
     // ---- Ambient loop ----
 
     /**
-     * 8-second dungeon drone. Three low sines (A1, E2, A2 — root + fifth +
-     * octave) modulated by a 0.25 Hz LFO (exactly two full LFO cycles per
+     * 8-second dungeon drone. Three low sines (A1, E2-ish, A2 — root + fifth
+     * + octave) modulated by a 0.25 Hz LFO (exactly two full LFO cycles per
      * buffer so the envelope is continuous at the loop point), plus a
      * 1-pole low-passed noise layer for breath / wind.
      *
      * Every tonal frequency is a multiple of 1/8 Hz (= 0.125 Hz), so each
-     * sine closes an integer number of cycles in the 8-second buffer —
-     * the loop wrap has no waveform discontinuity. The noise layer is
-     * random so it can pop microscopically, but its amplitude is low and
-     * the low-pass smooths it; in practice the loop sounds seamless.
+     * sine closes an integer number of cycles in the 8-second buffer.
      */
     private fun synthAmbientLoop(): ShortArray {
         val durSec = 8.0
         val n = (SAMPLE_RATE * durSec).toInt()
         val out = ShortArray(n)
         var lpf = 0.0
-        val lpfAlpha = 0.04  // strong low-pass for the wind layer
-
+        val lpfAlpha = 0.04
         for (i in 0 until n) {
             val t = i.toDouble() / SAMPLE_RATE
-            // 0.25 Hz LFO, two full cycles over 8 s; ranges 0.5..1.0
             val lfo = 0.75 + 0.25 * sin(2 * PI * 0.25 * t)
-            val a1     = sineW(t, 55.0)   * 0.35 * lfo
-            val a2     = sineW(t, 110.0)  * 0.18 * lfo
-            val fifth  = sineW(t, 82.5)   * 0.10
+            val a1    = sineW(t, 55.0)  * 0.35 * lfo
+            val a2    = sineW(t, 110.0) * 0.18 * lfo
+            val fifth = sineW(t, 82.5)  * 0.10
             val noiseRaw = noiseW() * 0.5
             lpf += lpfAlpha * (noiseRaw - lpf)
-            // Overall scale 0.42 keeps the drone clearly under the SFX.
             val v = (a1 + a2 + fifth + lpf * 0.25) * 0.42
             out[i] = toSample(v)
         }

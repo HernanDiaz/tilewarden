@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import com.tilewarden.app.ui.theme.TilewardenTheme
 
 /**
@@ -47,8 +48,10 @@ private fun TilewardenApp() {
     var activeConfig: GameConfig? by remember { mutableStateOf(null) }
 
     // One AudioEngine for the whole process. Synthesises every SFX once at
-    // construction and keeps the mute flag across setup ↔ game transitions.
-    val audio = remember { AudioEngine() }
+    // construction (materialised as WAVs in cacheDir for SoundPool) and
+    // keeps the mute flag across setup ↔ game transitions.
+    val appContext = LocalContext.current.applicationContext
+    val audio = remember { AudioEngine(appContext) }
 
     val cfg = activeConfig
     if (cfg == null) {
