@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A simple amber 'T' on a transparent background. -->
+    <path
+        android:fillColor="#B58E5C"
+        android:pathData="M32,32 L76,32 L76,44 L60,44 L60,80 L48,80 L48,44 L32,44 Z" />
+</vector>

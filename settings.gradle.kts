@@ -1,5 +1,29 @@
-// Plugin de auto-descarga de JDKs por si en el futuro algún módulo declara una
-// toolchain específica que el sistema no tenga instalada.
+// Resolver repositories for plugin lookups (AGP, Kotlin, Compose plugin).
+pluginManagement {
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+// Resolver repositories for project dependencies. Modern style: only declare
+// repos here, never per-module (FAIL_ON_PROJECT_REPOS enforces it).
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// Auto-download JDKs declared via toolchain {} blocks.
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
 }
@@ -7,4 +31,4 @@ plugins {
 rootProject.name = "Tilewarden"
 
 include(":core")
-// :app se añadirá en la Fase 2
+include(":app")

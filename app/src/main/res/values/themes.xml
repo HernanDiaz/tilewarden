@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Placeholder Android XML theme. The real styling is in Kotlin via
+        MaterialTheme inside MainActivity#setContent. This base theme just
+        ensures the system bars don't paint over the splash before Compose
+        takes over.
+    -->
+    <style name="Theme.Tilewarden" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#1B1714</item>
+        <item name="android:navigationBarColor">#1B1714</item>
+        <item name="android:windowBackground">#1B1714</item>
+    </style>
+</resources>
