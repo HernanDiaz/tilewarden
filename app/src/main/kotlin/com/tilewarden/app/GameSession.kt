@@ -256,6 +256,15 @@ class GameSession(
             buffer.clear()
             attacker.combat(defender, game)
             replayBuffered()
+            // If this attack just ended the game (last enemy down, or both
+            // sides wiped), emit GameEnded right away. Otherwise the user
+            // would have to tap Next round for nothing to happen except the
+            // verdict finally appearing.
+            if (GameEngine.isOver(game)) {
+                buffer.clear()
+                observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
+                replayBuffered()
+            }
         } finally {
             isAnimating = false
         }
