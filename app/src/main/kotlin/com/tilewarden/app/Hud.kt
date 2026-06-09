@@ -79,7 +79,7 @@ private fun CharacterRow(piece: PieceRender, acted: Boolean) {
             .alpha(if (acted) ACTED_ALPHA else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SymbolDisc(symbol = piece.symbol, color = piece.color, isHero = piece.isHero)
+        SymbolDisc(symbol = piece.symbol, color = piece.color)
 
         Spacer(Modifier.width(10.dp))
 
@@ -105,32 +105,23 @@ private fun CharacterRow(piece: PieceRender, acted: Boolean) {
     }
 }
 
-/** Team halo around a piece's subclass-coloured disc. */
 @Composable
-private fun SymbolDisc(symbol: Char, color: Color, isHero: Boolean) {
+private fun SymbolDisc(symbol: Char, color: Color) {
     val ink = Color(0xFF1B1714)
     Box(
         modifier = Modifier
             .size(28.dp)
             .clip(CircleShape)
-            .background(teamColor(isHero)),
+            .background(color)
+            .border(width = 1.dp, color = ink, shape = CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .clip(CircleShape)
-                .background(color)
-                .border(width = 0.5.dp, color = ink, shape = CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = symbol.toString(),
-                color = ink,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-            )
-        }
+        Text(
+            text = symbol.toString(),
+            color = ink,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+        )
     }
 }
 

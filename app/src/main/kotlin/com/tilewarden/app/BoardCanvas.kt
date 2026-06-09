@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.tilewarden.core.XYLocation
 
 private const val MOVE_ANIMATION_MS = 400
-private val ATTACK_BORDER_COLOR    = Color(0xFFFF8C30)   // warm orange (was red; clashed with team)
+private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
 private val DAMAGE_BUBBLE_COLOR    = Color(0xFFE04A4A)
 private val SELECTION_BORDER_COLOR = Color(0xFFFFDD66)   // gold
 private val VALID_MOVE_COLOR       = Color(0x6685D67A)
@@ -46,9 +46,9 @@ private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
 
 /**
  * 2D board with full interactivity: tap detection, selection highlight,
- * valid-move and valid-attack overlays, team halos, "already acted"
- * fading, plus the VFX from milestone 4 (movement slide, attack flash,
- * death fade, floating damage labels).
+ * valid-move and valid-attack overlays, "already acted" fading, plus the
+ * VFX from milestone 4 (movement slide, attack flash, death fade,
+ * floating damage labels).
  */
 @Composable
 fun BoardCanvas(
@@ -118,8 +118,7 @@ fun BoardCanvas(
             val borderPx          = (tileSizePx * 0.04f).coerceAtLeast(1f)
             val attackBorderPx    = borderPx * 2.5f
             val selectionBorderPx = borderPx * 3f
-            val pieceRadius       = tileSizePx * 0.34f
-            val haloRadius        = tileSizePx * 0.42f      // outer team ring
+            val pieceRadius       = tileSizePx * 0.36f
             val emptyDotRadius    = tileSizePx * 0.06f
 
             // Grid + valid-move highlights.
@@ -170,14 +169,6 @@ fun BoardCanvas(
                     )
                 }
 
-                // Team halo: a slightly larger filled circle behind the piece disc.
-                drawCircle(
-                    color = teamColor(piece.isHero).copy(alpha = alpha),
-                    radius = haloRadius,
-                    center = Offset(cx, cy),
-                )
-
-                // Piece disc (subclass-coloured).
                 drawCircle(
                     color = piece.color.copy(alpha = alpha),
                     radius = pieceRadius,
