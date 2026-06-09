@@ -95,7 +95,12 @@ class GameSession(
     val attackingPieces:  SnapshotStateList<String>       = mutableStateListOf()
     val dyingPieces:      SnapshotStateList<String>       = mutableStateListOf()
 
-    /** Heroes who took a manual action this round; AI skips them in nextRound. */
+    /** Heroes the player has acted with at least once this round. The AI
+     * skips them on Next round so it doesn't move them again. */
+    val touchedThisRound: SnapshotStateList<String> = mutableStateListOf()
+
+    /** Heroes who have FULLY completed their turn this round (ran out of
+     * moves or used their attack). The UI fades these out. */
     val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
     /** Initial snapshot of every character that started the game.
@@ -161,7 +166,7 @@ class GameSession(
         try {
             buffer.clear()
             if (!GameEngine.isOver(game)) {
-                GameEngine.resolveRound(game, skipNames = actedThisRound.toSet())
+                GameEngine.resolveRound(game, skipNames = touchedThisRound.toSet())
                 GameEngine.advanceRound(game)
             }
             if (GameEngine.isOver(game)) {
@@ -169,6 +174,7 @@ class GameSession(
             }
             replayBuffered()
             round = game.currentRound
+            touchedThisRound.clear()
             actedThisRound.clear()
             resetMovesLeft()
         } finally {
@@ -184,6 +190,7 @@ class GameSession(
         damageBubbles.clear()
         attackingPieces.clear()
         dyingPieces.clear()
+        touchedThisRound.clear()
         actedThisRound.clear()
         facingLeft.clear()
         attacksByName.clear()
@@ -249,12 +256,15 @@ class GameSession(
         updateFacing(name, from.y, target.y)
 
         // Record action + spend movement
-        if (name !in actedThisRound) actedThisRound.add(name)
+        if (name !in touchedThisRound) touchedThisRound.add(name)
         movesLeft[name] = (movesLeft[name] ?: 0) - 1
         log.add("$name${from} -> ${target}")
 
-        // Auto-deselect when out of moves
-        if ((movesLeft[name] ?: 0) <= 0) selectedHero = null
+        // Out of moves: fully done, fade out and deselect.
+        if ((movesLeft[name] ?: 0) <= 0) {
+            if (name !in actedThisRound) actedThisRound.add(name)
+            selectedHero = null
+        }
         return true
     }
 
@@ -276,8 +286,10 @@ class GameSession(
         if (ap == null || dp == null || !GameEngine.atRange(ap, dp)) return
 
         // Mark and clear UI selection BEFORE running combat so the user
-        // gets immediate visual feedback.
-        if (name !in actedThisRound) actedThisRound.add(name)
+        // gets immediate visual feedback. Attacks consume the whole turn
+        // (matches the AI semantics), so the hero is also fully done.
+        if (name !in touchedThisRound) touchedThisRound.add(name)
+        if (name !in actedThisRound)   actedThisRound.add(name)
         movesLeft[name] = 0
         selectedHero = null
 
