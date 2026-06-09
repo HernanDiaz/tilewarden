@@ -50,10 +50,9 @@ fun GameScreen(session: GameSession) {
     val winner        = session.winner
     val totalRounds   = session.totalRounds
 
-    // Snapshots — re-derived only when the round advances. Their data-class
+    // Snapshot — re-derived only when the round advances. Its data-class
     // equality means Compose will skip work if nothing actually changed.
     val boardSnapshot = remember(round) { BoardSnapshot.from(session.game) }
-    val charactersText = remember(round) { session.charactersText }
 
     // Auto-play coroutine: while autoPlay is true and the game isn't over,
     // step one round every AUTO_PLAY_DELAY_MS.
@@ -87,7 +86,7 @@ fun GameScreen(session: GameSession) {
             BoardCanvas(snapshot = boardSnapshot)
         }
 
-        CharactersPanel(text = charactersText)
+        HudPanel(pieces = boardSnapshot.pieces)
 
         EventLogPanel(
             log = session.log,
@@ -139,18 +138,6 @@ private fun Header(
             text = subtitle,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
-        )
-    }
-}
-
-@Composable
-private fun CharactersPanel(text: String) {
-    PanelCard {
-        Text(
-            text = if (text.isBlank()) "(no characters left)" else text,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }

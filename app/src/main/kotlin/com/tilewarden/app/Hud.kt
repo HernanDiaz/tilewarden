@@ -1,0 +1,144 @@
+package com.tilewarden.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * Visual HUD: one row per live character, with a coloured disc echoing the
+ * board piece, a name, a coloured health bar, and the numeric "current/max".
+ *
+ * Replaces the old monospace dump of [com.tilewarden.core.Character.toString].
+ */
+@Composable
+fun HudPanel(
+    pieces: List<PieceRender>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (pieces.isEmpty()) {
+            Text(
+                text = "(no characters left)",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            // Heroes first, monsters after — readable for the player.
+            val heroes = pieces.filter { it.isHero }
+            val monsters = pieces.filter { !it.isHero }
+            for (p in heroes) CharacterRow(piece = p)
+            if (heroes.isNotEmpty() && monsters.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+            }
+            for (p in monsters) CharacterRow(piece = p)
+        }
+    }
+}
+
+@Composable
+private fun CharacterRow(piece: PieceRender) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SymbolDisc(symbol = piece.symbol, color = piece.color)
+
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = piece.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(3.dp))
+            HealthBar(ratio = piece.healthRatio)
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+        Text(
+            text = "${piece.body}/${piece.initialBody}",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SymbolDisc(symbol: Char, color: Color) {
+    val ink = Color(0xFF1B1714)
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(color)
+            .border(width = 1.dp, color = ink, shape = CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = symbol.toString(),
+            color = ink,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+        )
+    }
+}
+
+@Composable
+private fun HealthBar(ratio: Float) {
+    val barColor = when {
+        ratio > 0.66f -> Color(0xFF7AA84A)  // green: healthy
+        ratio > 0.33f -> Color(0xFFE0B355)  // amber: hurt
+        ratio > 0f    -> Color(0xFFC0524A)  // red: critical
+        else          -> Color(0xFF6E2E2A)  // very dark red: dead/empty (shouldn't be visible — dead drop)
+    }
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(track),
+    ) {
+        // Fill — fraction is the health ratio.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction = ratio)
+                .fillMaxHeight()
+                .background(barColor),
+        )
+    }
+}
+

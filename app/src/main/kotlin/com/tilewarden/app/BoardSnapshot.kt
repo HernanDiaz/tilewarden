@@ -37,6 +37,9 @@ data class BoardSnapshot(
                         symbol = c.symbol,
                         color = pieceColor(c),
                         name = c.name,
+                        body = c.body,
+                        initialBody = c.initialBody,
+                        isHero = c is Hero,
                     )
                 }
             }
@@ -58,7 +61,15 @@ data class PieceRender(
     val symbol: Char,
     val color: Color,
     val name: String,
-)
+    val body: Int,
+    val initialBody: Int,
+    val isHero: Boolean,
+) {
+    /** 0..1, the proportion of body remaining. Capped to that range. */
+    val healthRatio: Float
+        get() = if (initialBody <= 0) 0f
+                else (body.toFloat() / initialBody.toFloat()).coerceIn(0f, 1f)
+}
 
 /** Placeholder palette — replaced when we commit to a final visual theme. */
 private fun pieceColor(c: Character): Color = when (c) {
