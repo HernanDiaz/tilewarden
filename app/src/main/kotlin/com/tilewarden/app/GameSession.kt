@@ -154,6 +154,7 @@ class GameSession(
         buffer.clear()
         rebuildPiecesFromGame()
         resetMovesLeft()
+        markStuckHeroesAsActed()
         log.add("=== GAME START ===")
     }
 
@@ -177,6 +178,7 @@ class GameSession(
             touchedThisRound.clear()
             actedThisRound.clear()
             resetMovesLeft()
+            markStuckHeroesAsActed()
         } finally {
             isAnimating = false
         }
@@ -201,6 +203,7 @@ class GameSession(
         buffer.clear()
         rebuildPiecesFromGame()
         resetMovesLeft()
+        markStuckHeroesAsActed()
         round = game.currentRound
         log.add("=== GAME START ===")
     }
@@ -265,6 +268,8 @@ class GameSession(
             if (name !in actedThisRound) actedThisRound.add(name)
             selectedHero = null
         }
+        // A move can pin another hero against allies / a wall — re-evaluate.
+        markStuckHeroesAsActed()
         return true
     }
 
@@ -311,6 +316,9 @@ class GameSession(
         } finally {
             isAnimating = false
         }
+        // An attack can kill the attacker (counter) or a defender, freeing
+        // squares and unblocking — or pinning — other heroes. Re-evaluate.
+        markStuckHeroesAsActed()
     }
 
     /**
@@ -344,6 +352,30 @@ class GameSession(
         movesLeft.clear()
         for (c in game.characters) {
             if (c is Hero && c.isAlive) movesLeft[c.name] = c.moves
+        }
+    }
+
+    /**
+     * Any alive hero who can neither move (every adjacent square is taken
+     * or out of bounds) nor attack (no enemy in melee range) has nothing
+     * useful to do this round. Mark them as fully acted so they don't
+     * keep the auto-advance condition blocked, and so the UI fades them
+     * out like any other spent hero.
+     *
+     * Idempotent: heroes already in [actedThisRound] are skipped.
+     */
+    private fun markStuckHeroesAsActed() {
+        if (isOver) return
+        for (c in game.characters) {
+            if (c !is Hero || !c.isAlive) continue
+            if (c.name in actedThisRound) continue
+            val hasMove   = GameEngine.validPositions(game, c).isNotEmpty()
+            val hasTarget = GameEngine.validTargets(game, c).isNotEmpty()
+            if (!hasMove && !hasTarget) {
+                if (c.name !in touchedThisRound) touchedThisRound.add(c.name)
+                actedThisRound.add(c.name)
+                if (selectedHero == c.name) selectedHero = null
+            }
         }
     }
 
