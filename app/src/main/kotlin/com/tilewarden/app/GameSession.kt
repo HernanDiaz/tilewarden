@@ -376,6 +376,3 @@ class GameSession(
     }
 }
 
-@Composable
-fun rememberGameSession(seed: Long = 2026L): GameSession =
-    remember(seed) { GameSession(seed) }

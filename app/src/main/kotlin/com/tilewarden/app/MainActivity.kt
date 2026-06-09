@@ -6,16 +6,22 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.tilewarden.app.ui.theme.TilewardenTheme
 
 /**
  * Tilewarden — Android entry point.
  *
- * Phase 2 milestone 2: the game is now interactive — a [GameSession] state
- * holder drives a [com.tilewarden.core.Game] one round at a time, and the
- * UI offers Next-round / Auto-play / Reset controls and a scrolling event
- * log. Still text-only; milestone 3 will swap the ASCII board for Canvas.
+ * Two-screen navigation:
+ * - [SetupScreen] until the player commits a [GameConfig].
+ * - [GameScreen] (driven by a [GameSession]) once a config exists.
+ *
+ * Tapping "Menu" inside the game clears the config and returns to setup.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -26,10 +32,45 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val session = rememberGameSession()
-                    GameScreen(session)
+                    TilewardenApp()
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TilewardenApp() {
+    // Track both the active config AND the last one the user committed to,
+    // so the setup screen can re-open with the same values pre-filled.
+    var lastConfig by remember { mutableStateOf(GameConfig.Default) }
+    var activeConfig: GameConfig? by remember { mutableStateOf(null) }
+
+    val cfg = activeConfig
+    if (cfg == null) {
+        SetupScreen(
+            initial = lastConfig,
+            onStart = { committed ->
+                lastConfig = committed
+                activeConfig = committed
+            },
+        )
+    } else {
+        // remember(cfg) means a brand-new GameSession every time the user
+        // commits a fresh config — clean reset of state, log, RNG, etc.
+        val session = remember(cfg) {
+            GameSession(
+                seed = cfg.seed,
+                numHeroes = cfg.numHeroes,
+                numMonsters = cfg.numMonsters,
+                boardRows = cfg.boardRows,
+                boardColumns = cfg.boardColumns,
+                totalRounds = cfg.totalRounds,
+            )
+        }
+        GameScreen(
+            session = session,
+            onBackToMenu = { activeConfig = null },
+        )
     }
 }

@@ -37,7 +37,10 @@ import com.tilewarden.core.XYLocation
 import kotlinx.coroutines.launch
 
 @Composable
-fun GameScreen(session: GameSession) {
+fun GameScreen(
+    session: GameSession,
+    onBackToMenu: () -> Unit = {},
+) {
     var autoPlay by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -110,6 +113,10 @@ fun GameScreen(session: GameSession) {
             onReset = {
                 autoPlay = false
                 session.reset()
+            },
+            onMenu = {
+                autoPlay = false
+                onBackToMenu()
             },
         )
     }
@@ -259,31 +266,46 @@ private fun Controls(
     onNext: () -> Unit,
     onToggleAuto: () -> Unit,
     onReset: () -> Unit,
+    onMenu: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Button(
-            onClick = onNext,
-            enabled = !isOver && !autoPlay && !isAnimating,
-            modifier = Modifier.weight(1f),
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Next round")
+            Button(
+                onClick = onNext,
+                enabled = !isOver && !autoPlay && !isAnimating,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Next round")
+            }
+            Button(
+                onClick = onToggleAuto,
+                enabled = !isOver,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (autoPlay) "Pause" else "Auto-play")
+            }
         }
-        Button(
-            onClick = onToggleAuto,
-            enabled = !isOver,
-            modifier = Modifier.weight(1f),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(if (autoPlay) "Pause" else "Auto-play")
-        }
-        OutlinedButton(
-            onClick = onReset,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text("Reset")
+            OutlinedButton(
+                onClick = onReset,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Reset")
+            }
+            OutlinedButton(
+                onClick = onMenu,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Menu")
+            }
         }
     }
 }
