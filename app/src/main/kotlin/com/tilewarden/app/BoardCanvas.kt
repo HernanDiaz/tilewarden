@@ -185,11 +185,13 @@ fun BoardCanvas(
     }
 
     // Render grid: same width as the playable area (no left/right walls).
-    // Both horizontal walls are 2 rows tall with a wall_top_mid remate
-    // strip on TOP of a wall_mid brick body. The remate's dark line sits
-    // at the top of every wall, matching the sprite's own orientation.
+    // Top wall is 2 rows (remate + body). Bottom wall is 2 rows too, but
+    // its remate row overlaps the last floor row — wall_top_mid's top
+    // band is transparent so the floor shows through, and the dark
+    // remate line ends up flush against the wall body. Total perimeter
+    // height is therefore 3 rows, not 4.
     val renderCols = columns
-    val renderRows = rows + 4
+    val renderRows = rows + 3
     val playRowOffset = 2  // top wall = 2 rows
     val playColOffset = 0  // no side walls
 
@@ -245,41 +247,25 @@ fun BoardCanvas(
 
             // 2) Horizontal walls only — nothing to the left or right.
             //
-            // wall_top_mid is 16x16 BUT its top 6 rows are fully
-            // transparent (alpha 0). Drawn as-is for the TOP wall this
-            // is harmless because nothing sits above row 0. For the
-            // BOTTOM wall those transparent pixels appear between the
-            // floor and the body and read as a black gap, since the
-            // canvas background is dark.
+            // wall_top_mid has 6 fully transparent rows at the top of
+            // its sprite. For the BOTTOM wall we exploit that: the
+            // remate is drawn ON TOP of the last floor row, so the
+            // transparent band reveals the floor and the dark line
+            // sits flush against the wall body below.
             //
-            // Fix: for the bottom remate, draw a CROPPED version of
-            // wall_top_mid — the bottom 10 visible pixels stretched to
-            // fill the whole cell. Same brick + dark-line look, no
-            // transparent band on top.
-            //
-            // Row 0:        wall_top_mid x cols                       (top remate)
-            // Row 1:        wall_mid     x cols                       (top body)
+            // Row 0:        wall_top_mid x cols  (top remate)
+            // Row 1:        wall_mid     x cols  (top body)
             // Rows 2..N+1:  playable floor
-            // Row N+2:      wall_top_mid cropped (rows 6..15) x cols  (bottom remate)
-            // Row N+3:      wall_mid     x cols                       (bottom body)
-            val cropTop = 6
-            val visibleHeight = wallTopMid.height - cropTop
-            val sInt = tileSizePx.roundToInt()
+            //   - Row N+1 (= renderRows - 2) is BOTH the last floor row
+            //     AND the bottom remate row. The wall sprite is drawn
+            //     after the floor so it overlays.
+            // Row N+2:      wall_mid     x cols  (bottom body)
             for (rc in 0 until renderCols) {
-                drawTile(wallTopMid, renderRow = 0, renderCol = rc, tileSizePx = tileSizePx)
-                drawTile(wallMid,    renderRow = 1, renderCol = rc, tileSizePx = tileSizePx)
-                // Bottom remate: cropped to skip the transparent top band.
-                val left = rc * tileSizePx
-                val top  = (renderRows - 2) * tileSizePx
-                drawImage(
-                    image = wallTopMid,
-                    srcOffset = IntOffset(0, cropTop),
-                    srcSize = IntSize(wallTopMid.width, visibleHeight),
-                    dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
-                    dstSize = IntSize(sInt, sInt),
-                    filterQuality = FilterQuality.None,
-                )
-                drawTile(wallMid, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallTopMid, renderRow = 0,              renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallMid,    renderRow = 1,              renderCol = rc, tileSizePx = tileSizePx)
+                // Bottom remate overlays the last floor row.
+                drawTile(wallTopMid, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(wallMid,    renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
 
             // 3) Valid-move tints over playable floor cells.
