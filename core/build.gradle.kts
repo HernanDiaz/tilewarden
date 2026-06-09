@@ -1,8 +1,8 @@
-// Módulo :core — lógica de juego pura, JVM, sin dependencias de Android.
+// Módulo :core — lógica de juego pura en Kotlin, JVM, sin dependencias de Android.
 // Se importa tal cual desde el módulo :app cuando llegue Fase 2.
 
 plugins {
-    `java-library`
+    kotlin("jvm")
 }
 
 java {
@@ -10,9 +10,14 @@ java {
     targetCompatibility = JavaVersion.VERSION_11
 }
 
+kotlin {
+    jvmToolchain(11)
+}
+
 dependencies {
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation(kotlin("test"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
