@@ -43,7 +43,6 @@ fun GameScreen(
     session: GameSession,
     onBackToMenu: () -> Unit = {},
 ) {
-    var autoPlay by remember { mutableStateOf(false) }
     var inspected: PieceRender? by remember { mutableStateOf(null) }
     var showSummary by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -55,13 +54,6 @@ fun GameScreen(
     val selectedHero  = session.selectedHero
     val validMoves    = session.validMoveTargets()
     val attackTargets = session.validAttackTargets()
-
-    LaunchedEffect(autoPlay) {
-        while (autoPlay && !session.isOver) {
-            session.nextRound()
-        }
-        if (session.isOver) autoPlay = false
-    }
 
     // Keep the inspector in sync: if the inspected piece dies / leaves the
     // board, drop the overlay automatically.
@@ -85,27 +77,23 @@ fun GameScreen(
 
     // Auto-advance once every alive hero has fully spent their turn. Manual
     // play turns into something like: tap heroes, move them, see the AI
-    // round resolve, repeat — without ever needing to press Next round.
+    // round resolve, repeat.
     //
     // nextRound() is dispatched into `scope` (the screen-level coroutine
     // scope), NOT awaited inside the LaunchedEffect. If we awaited it here
     // the effect would cancel mid-call as soon as nextRound mutated any of
-    // the keys (pieces.size, actedThisRound.size, isAnimating), interrupting
-    // resolveRound + replayBuffered halfway through.
+    // the keys, interrupting resolveRound + replayBuffered halfway through.
     LaunchedEffect(
         session.actedThisRound.size,
         session.pieces.size,
         session.isOver,
-        autoPlay,
     ) {
-        if (autoPlay || session.isAnimating || session.isOver) return@LaunchedEffect
+        if (session.isAnimating || session.isOver) return@LaunchedEffect
         val aliveHeroes = session.pieces.filter { it.isHero }
         if (aliveHeroes.isEmpty()) return@LaunchedEffect
         if (aliveHeroes.all { it.name in session.actedThisRound }) {
             delay(600)
-            // Re-check after the delay: the player might have hit Reset
-            // or the autoplay loop might have started in the meantime.
-            if (!session.isAnimating && !session.isOver && !autoPlay) {
+            if (!session.isAnimating && !session.isOver) {
                 scope.launch { session.nextRound() }
             }
         }
@@ -164,19 +152,9 @@ fun GameScreen(
             )
 
             Controls(
-                autoPlay = autoPlay,
                 isOver = isOver,
-                isAnimating = isAnimating,
-                onNext = { scope.launch { session.nextRound() } },
-                onToggleAuto = { autoPlay = !autoPlay },
-                onReset = {
-                    autoPlay = false
-                    session.reset()
-                },
-                onMenu = {
-                    autoPlay = false
-                    onBackToMenu()
-                },
+                onReset = { session.reset() },
+                onMenu = onBackToMenu,
                 showSummaryButton = isOver && !showSummary,
                 onShowSummary = { showSummary = true },
             )
@@ -194,12 +172,10 @@ fun GameScreen(
                 session = session,
                 showConfetti = winner == com.tilewarden.core.Side.HEROES,
                 onRematch = {
-                    autoPlay = false
                     showSummary = false
                     session.reset()
                 },
                 onNewGame = {
-                    autoPlay = false
                     showSummary = false
                     onBackToMenu()
                 },
@@ -338,11 +314,7 @@ private fun PanelCard(
 
 @Composable
 private fun Controls(
-    autoPlay: Boolean,
     isOver: Boolean,
-    isAnimating: Boolean,
-    onNext: () -> Unit,
-    onToggleAuto: () -> Unit,
     onReset: () -> Unit,
     onMenu: () -> Unit,
     showSummaryButton: Boolean,
@@ -354,26 +326,6 @@ private fun Controls(
                 onClick = onShowSummary,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Show summary") }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Button(
-                onClick = onNext,
-                enabled = !isOver && !autoPlay && !isAnimating,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Next round")
-            }
-            Button(
-                onClick = onToggleAuto,
-                enabled = !isOver,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(if (autoPlay) "Pause" else "Auto-play")
-            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
