@@ -1,6 +1,7 @@
 package com.tilewarden.app
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,9 +14,12 @@ import com.tilewarden.core.GameEngine
 import com.tilewarden.core.GameEvent
 import com.tilewarden.core.GameObserver
 import com.tilewarden.core.Side
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/** Per-event animation/visibility timings used during replay (in ms). */
+/** Per-event timings (ms) — the cadence of the replay. */
 private const val MOVE_MS    = 400L
 private const val ATTACK_MS  = 220L
 private const val RESOLVE_MS = 220L
@@ -24,23 +28,31 @@ private const val DAMAGE_MS  = 300L
 private const val DEATH_MS   = 450L
 private const val MISC_MS    =  60L
 
+/** Visual-effect lifetimes (ms). */
+internal const val BUBBLE_LIFETIME_MS = 700
+internal const val ATTACK_FLASH_MS    = 220L
+internal const val DEATH_FADE_MS      = DEATH_MS.toInt()
+
+/** A floating "-N" damage label hovering over the wounded piece. */
+@Immutable
+data class DamageBubble(
+    val id: Long,
+    val row: Int,
+    val column: Int,
+    val amount: Int,
+)
+
 /**
  * Compose state holder that drives a match AND replays its events
  * one-by-one so the UI sees the action unfold piece-by-piece.
  *
- * Flow per call to [nextRound]:
- * 1. Run one full engine round, capturing every emitted [GameEvent] in
- *    an internal buffer (the observer doesn't update the UI directly).
- * 2. Replay the buffer with delays. Each event:
- *      - appends a line to [log] if it has a description,
- *      - mutates exactly the affected [PieceRender] in [pieces]
- *        (move, lose body, or disappear on death),
- *      - waits a duration matched to the visual effect.
- * 3. While replaying, [isAnimating] is true and the controls are disabled.
+ * In addition to the [pieces] list, the session exposes three short-lived
+ * effect collections for the [BoardCanvas] to render on top of the board:
  *
- * The setup events emitted while [GameEngine.placeCharactersRandomly]
- * runs are intentionally discarded — the initial board is shown directly
- * from a snapshot of [Game.characters].
+ * - [damageBubbles] — floating "-N" labels above wounded pieces.
+ * - [attackingPieces] — names currently mid-attack (red border flash).
+ * - [dyingPieces]    — names that took the killing blow but are still
+ *   visible while they fade out. They leave [pieces] after [DEATH_MS].
  */
 class GameSession(
     private val seed: Long,
@@ -50,48 +62,41 @@ class GameSession(
     val boardColumns: Int = 10,
     val totalRounds: Int = 20,
 ) {
-    /** Current round number (1-based). */
     var round: Int by mutableStateOf(1)
         private set
 
-    /** `true` once the game has ended. */
     var isOver: Boolean by mutableStateOf(false)
         private set
 
-    /** Winner side once the game ends. */
     var winner: Side? by mutableStateOf(null)
         private set
 
-    /** True while a round's events are being replayed; controls should disable. */
     var isAnimating: Boolean by mutableStateOf(false)
         private set
 
-    /** Live, observable list of characters as the UI sees them. */
-    val pieces: SnapshotStateList<PieceRender> = mutableStateListOf()
+    val pieces:           SnapshotStateList<PieceRender>  = mutableStateListOf()
+    val damageBubbles:    SnapshotStateList<DamageBubble> = mutableStateListOf()
+    val attackingPieces:  SnapshotStateList<String>       = mutableStateListOf()
+    val dyingPieces:      SnapshotStateList<String>       = mutableStateListOf()
 
-    /** Append-only event log (only the lines worth showing). */
     val log: SnapshotStateList<String> = mutableStateListOf()
 
-    val heroesAlive: Int get() = pieces.count { it.isHero }
-    val monstersAlive: Int get() = pieces.count { !it.isHero }
+    val heroesAlive: Int get() = pieces.count { it.isHero && it.name !in dyingPieces }
+    val monstersAlive: Int get() = pieces.count { !it.isHero && it.name !in dyingPieces }
 
     private val buffer: ArrayDeque<GameEvent> = ArrayDeque()
-
     private val observer = object : GameObserver {
         override fun onEvent(event: GameEvent) { buffer.addLast(event) }
     }
-
     private var game: Game = buildFreshGame()
+    private var nextBubbleId: Long = 0
 
     init {
-        // The placement above pushed nothing to the buffer (movePiece doesn't
-        // emit events), but clear defensively and show the starting state.
         buffer.clear()
         rebuildPiecesFromGame()
         log.add("=== GAME START ===")
     }
 
-    /** Advance one round and replay its events with delays. */
     suspend fun nextRound() {
         if (isOver || isAnimating) return
         isAnimating = true
@@ -101,8 +106,6 @@ class GameSession(
                 GameEngine.resolveRound(game)
                 GameEngine.advanceRound(game)
             }
-            // The engine's runGame would publish GameEnded; we drive the loop
-            // manually, so we have to emit it ourselves.
             if (GameEngine.isOver(game)) {
                 observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
             }
@@ -113,12 +116,14 @@ class GameSession(
         }
     }
 
-    /** Tear down the current game and start a fresh one with the same seed. */
     fun reset() {
         buffer.clear()
         log.clear()
         isOver = false
         winner = null
+        damageBubbles.clear()
+        attackingPieces.clear()
+        dyingPieces.clear()
         game = buildFreshGame()
         buffer.clear()
         rebuildPiecesFromGame()
@@ -149,17 +154,19 @@ class GameSession(
         }
     }
 
-    private suspend fun replayBuffered() {
+    private suspend fun replayBuffered() = coroutineScope {
         while (buffer.isNotEmpty()) {
             val event = buffer.removeFirst()
             describe(event).takeIf { it.isNotEmpty() }?.let { log.add(it) }
             applyEventToPieces(event)
             delay(durationFor(event))
         }
+        // The enclosing coroutineScope waits for fire-and-forget effect jobs
+        // (bubble cleanup, attack flash decay, dying piece removal) before
+        // returning — so a fresh nextRound never starts on top of stale fx.
     }
 
-    /** Mutate the [pieces] list in place to reflect a single event. */
-    private fun applyEventToPieces(event: GameEvent) {
+    private fun CoroutineScope.applyEventToPieces(event: GameEvent) {
         when (event) {
             is GameEvent.PieceMoved -> {
                 val idx = pieces.indexOfFirst { it.name == event.character.name }
@@ -170,6 +177,14 @@ class GameSession(
                     )
                 }
             }
+            is GameEvent.Attacked -> {
+                val name = event.attacker.name
+                if (name !in attackingPieces) attackingPieces.add(name)
+                launch {
+                    delay(ATTACK_FLASH_MS)
+                    attackingPieces.remove(name)
+                }
+            }
             is GameEvent.Damaged -> {
                 val idx = pieces.indexOfFirst { it.name == event.character.name }
                 if (idx >= 0) {
@@ -177,16 +192,36 @@ class GameSession(
                     pieces[idx] = cur.copy(
                         body = (cur.body - event.wounds).coerceAtLeast(0),
                     )
+                    val bubble = DamageBubble(
+                        id = ++nextBubbleId,
+                        row = cur.row,
+                        column = cur.column,
+                        amount = event.wounds,
+                    )
+                    damageBubbles.add(bubble)
+                    launch {
+                        delay(BUBBLE_LIFETIME_MS.toLong())
+                        damageBubbles.remove(bubble)
+                    }
                 }
             }
             is GameEvent.Died -> {
-                pieces.removeAll { it.name == event.character.name }
+                val name = event.character.name
+                if (name !in dyingPieces) dyingPieces.add(name)
+                launch {
+                    // Wait for the fade animation to play out, then remove
+                    // the piece for good. The dyingPieces flag stays on the
+                    // way out so the alpha animation continues to target 0.
+                    delay(DEATH_MS)
+                    pieces.removeAll { it.name == name }
+                    dyingPieces.remove(name)
+                }
             }
             is GameEvent.GameEnded -> {
                 isOver = true
                 winner = event.winner
             }
-            else -> { /* nothing visual */ }
+            else -> { /* RoundStarted, RoundEnded, AttackResolved, AttackBlocked, GameStarted, PieceBlocked */ }
         }
     }
 

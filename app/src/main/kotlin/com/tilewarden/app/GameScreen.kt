@@ -79,6 +79,9 @@ fun GameScreen(session: GameSession) {
                 rows = session.boardRows,
                 columns = session.boardColumns,
                 pieces = session.pieces,
+                dyingPieces = session.dyingPieces,
+                attackingPieces = session.attackingPieces,
+                damageBubbles = session.damageBubbles,
             )
         }
 
