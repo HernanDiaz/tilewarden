@@ -25,11 +25,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -37,8 +37,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.tilewarden.core.XYLocation
+import kotlin.math.roundToInt
 
 private const val MOVE_ANIMATION_MS = 400
 private val ATTACK_BORDER_COLOR    = Color(0xFFFF5040)
@@ -53,10 +56,13 @@ private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
  * VFX from milestone 4 (movement slide, attack flash, death fade,
  * floating damage labels).
  *
- * Pieces are drawn as 16x16 vector-drawable pixel-art sprites. The four
- * built-in symbols ('B', 'D', 'G', 'M') map to sprite_{barbarian,dwarf,
- * goblin,mummy}; any other symbol falls back to a coloured disc with the
- * letter inside (forward-compatible if we add new character classes).
+ * Pieces are drawn from Kenney's Tiny Dungeon pack (CC0). Each character
+ * symbol maps to a specific tile in res/drawable-nodpi; if a new symbol
+ * is introduced without a sprite mapping, the renderer falls back to a
+ * coloured disc with the letter inside.
+ *
+ * Sprites are 16x16 px raster. They're drawn with [FilterQuality.None]
+ * so scaling stays nearest-neighbour (crisp pixels, no antialiasing).
  */
 @Composable
 fun BoardCanvas(
@@ -86,17 +92,18 @@ fun BoardCanvas(
         fontWeight = FontWeight.Bold,
     )
 
-    // Load the four pixel sprites once at composition; reuse for every draw.
-    val barbarianPainter = painterResource(R.drawable.sprite_barbarian)
-    val dwarfPainter     = painterResource(R.drawable.sprite_dwarf)
-    val goblinPainter    = painterResource(R.drawable.sprite_goblin)
-    val mummyPainter     = painterResource(R.drawable.sprite_mummy)
+    // Sprite mappings (tiles from Kenney Tiny Dungeon, CC0).
+    // To swap a character's sprite, change the R.drawable.tile_XXXX here.
+    val barbarianBitmap = ImageBitmap.imageResource(R.drawable.tile_0097)  // red-armoured knight
+    val dwarfBitmap     = ImageBitmap.imageResource(R.drawable.tile_0089)  // stocky humanoid
+    val goblinBitmap    = ImageBitmap.imageResource(R.drawable.tile_0108)  // small green creature
+    val mummyBitmap     = ImageBitmap.imageResource(R.drawable.tile_0116)  // light wrapped figure
 
-    fun painterFor(symbol: Char): Painter? = when (symbol) {
-        'B' -> barbarianPainter
-        'D' -> dwarfPainter
-        'G' -> goblinPainter
-        'M' -> mummyPainter
+    fun bitmapFor(symbol: Char): ImageBitmap? = when (symbol) {
+        'B' -> barbarianBitmap
+        'D' -> dwarfBitmap
+        'G' -> goblinBitmap
+        'M' -> mummyBitmap
         else -> null
     }
 
@@ -152,7 +159,6 @@ fun BoardCanvas(
             val pieceRadius       = tileSizePx * 0.36f
             val emptyDotRadius    = tileSizePx * 0.06f
             val spriteSize        = tileSizePx * 0.85f
-            val spriteInset       = (tileSizePx - spriteSize) / 2f
 
             // Grid + valid-move highlights.
             for (row in 0 until rows) {
@@ -190,8 +196,6 @@ fun BoardCanvas(
                 val cx = ap.column * tileSizePx + tileSizePx / 2f
                 val cy = ap.row    * tileSizePx + tileSizePx / 2f
 
-                // Valid-attack tint behind the piece — anchored on the logical
-                // tile, not on the animated centre, so the marker stays put.
                 if (piece.name in validAttackTargets) {
                     drawRect(
                         color = VALID_ATTACK_COLOR,
@@ -203,20 +207,24 @@ fun BoardCanvas(
                     )
                 }
 
-                val painter = painterFor(piece.symbol)
-                if (painter != null) {
-                    // Sprite path: draw the vector pixel-art at 85% of the tile,
-                    // centred on the animated position.
-                    translate(
-                        left = cx - spriteSize / 2f,
-                        top  = cy - spriteSize / 2f,
-                    ) {
-                        with(painter) {
-                            draw(size = Size(spriteSize, spriteSize), alpha = alpha)
-                        }
-                    }
+                val bitmap = bitmapFor(piece.symbol)
+                if (bitmap != null) {
+                    // Nearest-neighbour scaling so pixel art stays crisp.
+                    val dstSizeInt = spriteSize.roundToInt()
+                    drawImage(
+                        image = bitmap,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(bitmap.width, bitmap.height),
+                        dstOffset = IntOffset(
+                            (cx - spriteSize / 2f).roundToInt(),
+                            (cy - spriteSize / 2f).roundToInt(),
+                        ),
+                        dstSize = IntSize(dstSizeInt, dstSizeInt),
+                        alpha = alpha,
+                        filterQuality = FilterQuality.None,
+                    )
                 } else {
-                    // Fallback: subclass without a sprite yet. Disc + letter.
+                    // Fallback for any future character class without a sprite.
                     drawCircle(
                         color = piece.color.copy(alpha = alpha),
                         radius = pieceRadius,
@@ -242,9 +250,7 @@ fun BoardCanvas(
                     )
                 }
 
-                // Selection / attack frame: rect around the whole tile so it
-                // reads like a grid highlight (matches the pixel-art aesthetic
-                // better than a floating circle).
+                // Selection / attack frame: rect around the tile.
                 val isAttacking = piece.name in attackingPieces
                 val isSelected  = piece.name == selectedHero
                 if (isSelected || isAttacking) {
