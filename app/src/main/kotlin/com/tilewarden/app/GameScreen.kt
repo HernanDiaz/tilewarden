@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun GameScreen(
     session: GameSession,
+    audio: AudioEngine,
     onBackToMenu: () -> Unit = {},
 ) {
     var inspected: PieceRender? by remember { mutableStateOf(null) }
@@ -115,6 +116,8 @@ fun GameScreen(
                 monstersAlive = session.monstersAlive,
                 isOver = isOver,
                 winner = winner,
+                muted = audio.muted,
+                onToggleMute = { audio.muted = !audio.muted },
             )
 
             ScoreBoard(
@@ -237,31 +240,44 @@ private fun Header(
     monstersAlive: Int,
     isOver: Boolean,
     winner: Side?,
+    muted: Boolean,
+    onToggleMute: () -> Unit,
 ) {
-    Column {
-        Text(
-            text = "Tilewarden",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(4.dp))
-        val subtitle = if (isOver) {
-            val verdict = when (winner) {
-                Side.HEROES   -> "Heroes win"
-                Side.MONSTERS -> "Monsters win"
-                Side.DRAW     -> "Draw"
-                null          -> "Finished"
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Tilewarden",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(4.dp))
+            val subtitle = if (isOver) {
+                val verdict = when (winner) {
+                    Side.HEROES   -> "Heroes win"
+                    Side.MONSTERS -> "Monsters win"
+                    Side.DRAW     -> "Draw"
+                    null          -> "Finished"
+                }
+                "Game over — $verdict"
+            } else {
+                "Round $round / $totalRounds  ·  Heroes $heroesAlive  ·  Monsters $monstersAlive"
             }
-            "Game over — $verdict"
-        } else {
-            "Round $round / $totalRounds  ·  Heroes $heroesAlive  ·  Monsters $monstersAlive"
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
         }
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        OutlinedButton(
+            onClick = onToggleMute,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text = if (muted) "Sound: off" else "Sound: on",
+                fontSize = 12.sp,
+            )
+        }
     }
 }
 

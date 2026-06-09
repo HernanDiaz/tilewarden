@@ -73,6 +73,7 @@ class GameSession(
     val boardRows: Int = 7,
     val boardColumns: Int = 10,
     val totalRounds: Int = 20,
+    private val audio: AudioEngine? = null,
 ) {
     var round: Int by mutableStateOf(1)
         private set
@@ -403,6 +404,7 @@ class GameSession(
                 updateFacing(event.character.name, event.from.y, event.to.y)
             }
             is GameEvent.Attacked -> {
+                audio?.play(SoundId.ATTACK_SWING)
                 val name = event.attacker.name
                 lastAttackerName = name
                 attacksByName[name] = (attacksByName[name] ?: 0) + 1
@@ -412,7 +414,11 @@ class GameSession(
                     attackingPieces.remove(name)
                 }
             }
+            is GameEvent.AttackBlocked -> {
+                audio?.play(SoundId.BLOCK)
+            }
             is GameEvent.Damaged -> {
+                audio?.play(SoundId.HIT)
                 lastAttackerName?.let { attacker ->
                     damageByName[attacker] = (damageByName[attacker] ?: 0) + event.wounds
                 }
@@ -436,6 +442,7 @@ class GameSession(
                 }
             }
             is GameEvent.Died -> {
+                audio?.play(SoundId.DEATH)
                 val name = event.character.name
                 if (name !in dyingPieces) dyingPieces.add(name)
                 launch {
@@ -445,6 +452,10 @@ class GameSession(
                 }
             }
             is GameEvent.GameEnded -> {
+                audio?.play(
+                    if (event.winner == Side.HEROES) SoundId.VICTORY
+                    else                              SoundId.DEFEAT,
+                )
                 isOver = true
                 winner = event.winner
             }

@@ -46,6 +46,10 @@ private fun TilewardenApp() {
     var lastConfig by remember { mutableStateOf(GameConfig.Default) }
     var activeConfig: GameConfig? by remember { mutableStateOf(null) }
 
+    // One AudioEngine for the whole process. Synthesises every SFX once at
+    // construction and keeps the mute flag across setup ↔ game transitions.
+    val audio = remember { AudioEngine() }
+
     val cfg = activeConfig
     if (cfg == null) {
         SetupScreen(
@@ -66,10 +70,12 @@ private fun TilewardenApp() {
                 boardRows = cfg.boardRows,
                 boardColumns = cfg.boardColumns,
                 totalRounds = cfg.totalRounds,
+                audio = audio,
             )
         }
         GameScreen(
             session = session,
+            audio = audio,
             onBackToMenu = { activeConfig = null },
         )
     }
