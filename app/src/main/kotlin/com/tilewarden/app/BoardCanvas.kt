@@ -62,10 +62,12 @@ private val VALID_ATTACK_COLOR     = Color(0x66FF6E4A)
  * 2D board with pixel-art floor + wall perimeter, animated character
  * sprites, tap / long-press detection and combat VFX.
  *
- * The render grid is two cells wider and two cells taller than the
- * playable area: an extra row at the top and bottom and a column on
- * each side become a stone-wall perimeter framing the dungeon. The
- * playable area is centred inside that frame at render offsets (1, 1).
+ * The render grid is two cells wider and four cells taller than the
+ * playable area. Horizontal walls are two tiles high — a row of
+ * `wall_top_mid` (the dark remate strip) over a row of `wall_mid`
+ * (the plain brick body) — both at the top and the bottom. Vertical
+ * sides are one column wide with `wall_left` / `wall_right`. The
+ * playable area is offset by (+1 column, +2 rows).
  *
  * Floor tiles are picked from four variants using a deterministic hash
  * of (row, column) so the same square always shows the same texture
@@ -185,9 +187,11 @@ fun BoardCanvas(
         }
     }
 
-    // Render grid = playable area + 1-cell wall perimeter on every side.
+    // Render grid: 1 wall column on each side, 2 wall rows top + bottom.
     val renderCols = columns + 2
-    val renderRows = rows + 2
+    val renderRows = rows + 4
+    val playRowOffset = 2  // top wall = 2 rows
+    val playColOffset = 1  // side wall = 1 column
 
     BoxWithConstraints(
         modifier = modifier
@@ -199,8 +203,8 @@ fun BoardCanvas(
                         val tileSizePx = size.width.toFloat() / renderCols
                         val rc = (offset.x / tileSizePx).toInt()
                         val rr = (offset.y / tileSizePx).toInt()
-                        val playCol = rc - 1
-                        val playRow = rr - 1
+                        val playCol = rc - playColOffset
+                        val playRow = rr - playRowOffset
                         if (playRow in 0 until rows && playCol in 0 until columns) {
                             onTileTap(playRow, playCol)
                         }
@@ -209,8 +213,8 @@ fun BoardCanvas(
                         val tileSizePx = size.width.toFloat() / renderCols
                         val rc = (offset.x / tileSizePx).toInt()
                         val rr = (offset.y / tileSizePx).toInt()
-                        val playCol = rc - 1
-                        val playRow = rr - 1
+                        val playCol = rc - playColOffset
+                        val playRow = rr - playRowOffset
                         if (playRow in 0 until rows && playCol in 0 until columns) {
                             onTileLongPress(playRow, playCol)
                         }
@@ -232,36 +236,64 @@ fun BoardCanvas(
                 for (c in 0 until columns) {
                     drawTile(
                         bitmap = floorAt(r, c),
-                        renderRow = r + 1,
-                        renderCol = c + 1,
+                        renderRow = r + playRowOffset,
+                        renderCol = c + playColOffset,
                         tileSizePx = tileSizePx,
                     )
                 }
             }
 
-            // 2) Walls — full perimeter around the playable area.
-            // Top edge.
+            // 2) Wall perimeter. Horizontal walls are TWO rows high — a
+            // top_mid 'remate' strip stacked on top of a mid 'brick' body —
+            // both at the top of the board and the bottom. Vertical sides
+            // are a single column of wall_left / wall_right tiles.
+            //
+            // Row 0:           wall_top_left  + wall_top_mid x N  + wall_top_right
+            // Row 1:           wall_left      + wall_mid     x N  + wall_right
+            //   playable area (rows tall)
+            // Row N+2:         wall_left      + wall_mid     x N  + wall_right
+            // Row N+3:         wall_bottom_left + wall_top_mid x N + wall_bottom_right
+
+            // Top remate (row 0)
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
-                    0 -> wallTopLeft
+                    0              -> wallTopLeft
                     renderCols - 1 -> wallTopRight
-                    else -> wallTopMid
+                    else           -> wallTopMid
                 }
                 drawTile(tile, renderRow = 0, renderCol = rc, tileSizePx = tileSizePx)
             }
-            // Bottom edge.
+            // Top brick body (row 1)
             for (rc in 0 until renderCols) {
                 val tile = when (rc) {
-                    0 -> wallBottomLeft
-                    renderCols - 1 -> wallBottomRight
-                    else -> wallMid
+                    0              -> wallLeft
+                    renderCols - 1 -> wallRight
+                    else           -> wallMid
                 }
-                drawTile(tile, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
+                drawTile(tile, renderRow = 1, renderCol = rc, tileSizePx = tileSizePx)
             }
-            // Left + right edges (between corners).
-            for (rr in 1 until renderRows - 1) {
+            // Side walls along the playable rows (between the two horizontal walls)
+            for (rr in playRowOffset until playRowOffset + rows) {
                 drawTile(wallLeft,  renderRow = rr, renderCol = 0,              tileSizePx = tileSizePx)
                 drawTile(wallRight, renderRow = rr, renderCol = renderCols - 1, tileSizePx = tileSizePx)
+            }
+            // Bottom brick body (row renderRows - 2)
+            for (rc in 0 until renderCols) {
+                val tile = when (rc) {
+                    0              -> wallLeft
+                    renderCols - 1 -> wallRight
+                    else           -> wallMid
+                }
+                drawTile(tile, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
+            }
+            // Bottom remate (last row)
+            for (rc in 0 until renderCols) {
+                val tile = when (rc) {
+                    0              -> wallBottomLeft
+                    renderCols - 1 -> wallBottomRight
+                    else           -> wallTopMid
+                }
+                drawTile(tile, renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
             }
 
             // 3) Valid-move tints over playable floor cells.
@@ -282,14 +314,14 @@ fun BoardCanvas(
                 val piece = ap.piece
                 val acted = piece.name in actedHeroes
                 val alpha = ap.alpha * (if (acted) ACTED_ALPHA else 1f)
-                val cx = (ap.column + 1) * tileSizePx + tileSizePx / 2f
+                val cx = (ap.column + playColOffset) * tileSizePx + tileSizePx / 2f
 
                 if (piece.name in validAttackTargets) {
                     drawRect(
                         color = VALID_ATTACK_COLOR,
                         topLeft = Offset(
-                            (piece.column + 1) * tileSizePx,
-                            (piece.row + 1) * tileSizePx,
+                            (piece.column + playColOffset) * tileSizePx,
+                            (piece.row + playRowOffset) * tileSizePx,
                         ),
                         size = Size(tileSizePx, tileSizePx),
                     )
@@ -301,7 +333,7 @@ fun BoardCanvas(
                     val spriteScale = tileSizePx * 0.95f / bitmap.width.toFloat()
                     val scaledW = bitmap.width  * spriteScale
                     val scaledH = bitmap.height * spriteScale
-                    val cellBottom = (ap.row + 1) * tileSizePx + tileSizePx
+                    val cellBottom = (ap.row + playRowOffset) * tileSizePx + tileSizePx
                     val left = cx - scaledW / 2f
                     val top  = cellBottom - scaledH
 
@@ -334,7 +366,7 @@ fun BoardCanvas(
                         )
                     }
                 } else {
-                    val cy = (ap.row + 1) * tileSizePx + tileSizePx / 2f
+                    val cy = (ap.row + playRowOffset) * tileSizePx + tileSizePx / 2f
                     drawCircle(
                         color = piece.color.copy(alpha = alpha),
                         radius = pieceRadius,
@@ -371,8 +403,8 @@ fun BoardCanvas(
                     drawRect(
                         color = outlineColor.copy(alpha = alpha),
                         topLeft = Offset(
-                            (piece.column + 1) * tileSizePx + outlineWidth / 2f,
-                            (piece.row + 1) * tileSizePx + outlineWidth / 2f,
+                            (piece.column + playColOffset) * tileSizePx + outlineWidth / 2f,
+                            (piece.row + playRowOffset) * tileSizePx + outlineWidth / 2f,
                         ),
                         size = Size(
                             tileSizePx - outlineWidth,
@@ -433,7 +465,7 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
     val progress = anim.value
     // +1 offset on both axes so bubbles land in the playable area, not on
     // the wall perimeter.
-    val baseTopOffsetDp = tileSize * (bubble.row + 1) + tileSize * 0.05f
+    val baseTopOffsetDp = tileSize * (bubble.row + 2) + tileSize * 0.05f
     val rise = tileSize * 0.8f * progress
 
     Text(
@@ -445,7 +477,7 @@ private fun DamageBubbleOverlay(bubble: DamageBubble, tileSize: Dp) {
         modifier = Modifier
             .width(tileSize)
             .offset(
-                x = tileSize * (bubble.column + 1),
+                x = tileSize * (bubble.column + 1),  // playColOffset = 1
                 y = baseTopOffsetDp - rise,
             )
             .alpha(1f - progress),
