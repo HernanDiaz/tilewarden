@@ -196,11 +196,11 @@ fun BoardCanvas(
     val playRowOffset = 2  // top wall = 2 rows
     val playColOffset = 0  // no side walls
 
-    // wall_top_mid's top 6 of 16 rows are transparent. To stop that band
-    // from showing as a black strip above the top remate, we shift the
-    // whole canvas content up by that amount and crop the Box vertically
-    // by the same amount.
-    val transparentBandFraction = 6f / 16f
+    // The whole canvas is pulled UP by this many tile-heights so the
+    // empty space above the top wall disappears. The Box's vertical size
+    // is reduced by the same amount so the bottom edge stays put.
+    // 1.0f = shift up by one full row.
+    val transparentBandFraction = 1f
 
     BoxWithConstraints(
         modifier = modifier
