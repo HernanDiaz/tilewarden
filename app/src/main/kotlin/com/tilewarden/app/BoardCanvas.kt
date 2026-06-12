@@ -92,6 +92,7 @@ fun BoardCanvas(
     attackingPieces: List<String>,
     damageBubbles: List<DamageBubble>,
     selectedHero: String?,
+    selectedHeroMovesLeft: Int = 0,
     validMoves: Set<XYLocation>,
     validAttackTargets: Set<String>,
     actedHeroes: List<String>,
@@ -164,18 +165,26 @@ fun BoardCanvas(
         }
     }
 
+    // A line slide can wrap a piece from one board edge to the opposite
+    // one. Tweening that jump would skate the sprite across the whole
+    // board, so any change bigger than one tile snaps instantly instead.
+    @Composable
+    fun animatedAxis(target: Float, label: String): Float {
+        val anim = remember(label) { Animatable(target) }
+        LaunchedEffect(target) {
+            if (abs(target - anim.value) > 1.5f) {
+                anim.snapTo(target)
+            } else {
+                anim.animateTo(target, tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing))
+            }
+        }
+        return anim.value
+    }
+
     val animatedPieces: List<AnimatedPiece> = pieces.map { piece ->
         key(piece.name) {
-            val animCol by animateFloatAsState(
-                targetValue = piece.column.toFloat(),
-                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
-                label = "col_${piece.name}",
-            )
-            val animRow by animateFloatAsState(
-                targetValue = piece.row.toFloat(),
-                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
-                label = "row_${piece.name}",
-            )
+            val animCol = animatedAxis(piece.column.toFloat(), "col_${piece.name}")
+            val animRow = animatedAxis(piece.row.toFloat(), "row_${piece.name}")
             val deathAlpha by animateFloatAsState(
                 targetValue = if (piece.name in dyingPieces) 0f else 1f,
                 animationSpec = tween(DEATH_FADE_MS),
@@ -188,17 +197,10 @@ fun BoardCanvas(
     // Crates animate their ride along a slide just like characters do.
     val animatedObstacles: List<AnimatedObstacle> = obstacles.map { o ->
         key(o.name) {
-            val animCol by animateFloatAsState(
-                targetValue = o.column.toFloat(),
-                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
-                label = "ocol_${o.name}",
+            AnimatedObstacle(
+                column = animatedAxis(o.column.toFloat(), "ocol_${o.name}"),
+                row    = animatedAxis(o.row.toFloat(), "orow_${o.name}"),
             )
-            val animRow by animateFloatAsState(
-                targetValue = o.row.toFloat(),
-                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
-                label = "orow_${o.name}",
-            )
-            AnimatedObstacle(animCol, animRow)
         }
     }
 
@@ -505,6 +507,40 @@ fun BoardCanvas(
                         ),
                         style = Stroke(width = attackBorderPx),
                     )
+                }
+            }
+
+            // 5.5) Remaining-steps pips floating above the selected hero.
+            // One gold dot per unspent move; drawn after every sprite so
+            // they're never occluded.
+            if (selectedHero != null && selectedHeroMovesLeft > 0) {
+                animatedPieces.firstOrNull { it.piece.name == selectedHero }?.let { ap ->
+                    val frames = framesFor(ap.piece.symbol)
+                    val spriteH = if (frames != null) {
+                        val bmp = frames[0]
+                        bmp.height * (tileSizePx * 0.95f / bmp.width.toFloat())
+                    } else {
+                        tileSizePx
+                    }
+                    val cx = (ap.column + playColOffset) * tileSizePx + tileSizePx / 2f
+                    val cellBottom = (ap.row + playRowOffset) * tileSizePx + tileSizePx
+                    val pipY = cellBottom - spriteH - tileSizePx * 0.14f
+                    val spacing = tileSizePx * 0.17f
+                    val radius  = tileSizePx * 0.055f
+                    val startX = cx - spacing * (selectedHeroMovesLeft - 1) / 2f
+                    repeat(selectedHeroMovesLeft) { i ->
+                        val px = startX + spacing * i
+                        drawCircle(
+                            color = Color(0xFF1B1714),
+                            radius = radius + tileSizePx * 0.018f,
+                            center = Offset(px, pipY),
+                        )
+                        drawCircle(
+                            color = SELECTION_BORDER_COLOR,
+                            radius = radius,
+                            center = Offset(px, pipY),
+                        )
+                    }
                 }
             }
 

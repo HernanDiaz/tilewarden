@@ -152,6 +152,7 @@ fun GameScreen(
                     attackingPieces = session.attackingPieces,
                     damageBubbles = session.damageBubbles,
                     selectedHero = selectedHero,
+                    selectedHeroMovesLeft = selectedHero?.let { session.movesRemaining(it) } ?: 0,
                     validMoves = validMoves,
                     validAttackTargets = attackTargets,
                     actedHeroes = session.actedThisRound,

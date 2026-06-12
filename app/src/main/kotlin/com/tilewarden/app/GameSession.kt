@@ -243,6 +243,9 @@ class GameSession(
         selectedHero = if (selectedHero == name) null else name
     }
 
+    /** Remaining manual steps for [name] this round (0 if unknown/spent). */
+    fun movesRemaining(name: String): Int = movesLeft[name] ?: 0
+
     /** Empty squares adjacent to the selected hero. Empty set if nothing selected. */
     fun validMoveTargets(): Set<XYLocation> {
         val name = selectedHero ?: return emptySet()
