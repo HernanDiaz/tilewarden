@@ -108,6 +108,18 @@ object GameEngine {
      */
     fun resolveRound(game: Game, skipNames: Set<String> = emptySet()) {
         game.notify(GameEvent.RoundStarted(game.currentRound))
+
+        // Monster Warden Action: once per round, and only when it kills.
+        // Resolved before individual turns so a freshly-opened gap can't
+        // be walked out of.
+        if (game.characters.any { it is Monster && it.isAlive }) {
+            bestMonsterSlide(game)?.let { s ->
+                game.board.slideLine(s.axis, s.index, s.delta)
+                game.notify(GameEvent.TilesSlid(s.axis, s.index, s.delta))
+                resolvePitFalls(game)
+            }
+        }
+
         val turnOrder = game.characters.toList()
         for (c in turnOrder) {
             if (!opponentsLeft(game)) break
@@ -121,6 +133,58 @@ object GameEngine {
     /** Move [game] to the next round. Useful when driving the loop manually. */
     fun advanceRound(game: Game) {
         game.currentRound++
+    }
+
+    /** A candidate Warden slide with its evaluated benefit for monsters. */
+    data class SlideChoice(val axis: Axis, val index: Int, val delta: Int, val score: Int)
+
+    /**
+     * Monster-side Warden AI: evaluate all 2*(rows+columns) possible
+     * slides analytically (no board mutation) and return the highest
+     * scoring one, or null when nothing is worth doing.
+     *
+     * Scoring per piece that would land on an open pit:
+     * - hero falls:    +10  (the whole point)
+     * - monster falls: -12  (never worth trading one-for-one)
+     * - crate falls:    -1  (plugs a pit — losing a kill tool, mildly bad)
+     *
+     * Only choices with score > 0 are considered; ties go to the first
+     * found (deterministic given the same board state).
+     */
+    fun bestMonsterSlide(game: Game): SlideChoice? {
+        if (game.board.pits.isEmpty()) return null
+        var best: SlideChoice? = null
+        for (axis in Axis.entries) {
+            val lineCount  = if (axis == Axis.ROW) game.board.rows    else game.board.columns
+            val lineLength = if (axis == Axis.ROW) game.board.columns else game.board.rows
+            for (index in 0 until lineCount) {
+                for (delta in intArrayOf(1, -1)) {
+                    var score = 0
+                    fun destOf(pos: XYLocation): XYLocation? {
+                        val onLine = if (axis == Axis.ROW) pos.x == index else pos.y == index
+                        if (!onLine) return null
+                        val coord = if (axis == Axis.ROW) pos.y else pos.x
+                        val wrapped = ((coord + delta) % lineLength + lineLength) % lineLength
+                        return if (axis == Axis.ROW) XYLocation(index, wrapped)
+                               else                  XYLocation(wrapped, index)
+                    }
+                    for (c in game.characters) {
+                        val dest = c.position?.let(::destOf) ?: continue
+                        if (game.board.isPit(dest)) {
+                            score += if (c is Hero) 10 else -12
+                        }
+                    }
+                    for (o in game.obstacles) {
+                        val dest = o.position?.let(::destOf) ?: continue
+                        if (game.board.isPit(dest)) score -= 1
+                    }
+                    if (score > 0 && score > (best?.score ?: 0)) {
+                        best = SlideChoice(axis, index, delta, score)
+                    }
+                }
+            }
+        }
+        return best
     }
 
     /**

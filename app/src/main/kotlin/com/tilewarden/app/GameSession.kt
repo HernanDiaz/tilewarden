@@ -181,11 +181,7 @@ class GameSession(
     // ---- AI round ----
 
     suspend fun nextRound() {
-        android.util.Log.d("Tilewarden", "nextRound() called. isOver=$isOver isAnimating=$isAnimating round=${game.currentRound} touched=${touchedThisRound.toList()}")
-        if (isOver || isAnimating) {
-            android.util.Log.d("Tilewarden", "nextRound() early return")
-            return
-        }
+        if (isOver || isAnimating) return
         selectedHero = null
         isAnimating = true
         try {
@@ -194,17 +190,16 @@ class GameSession(
                 GameEngine.resolveRound(game, skipNames = touchedThisRound.toSet())
                 GameEngine.advanceRound(game)
             }
-            android.util.Log.d("Tilewarden", "after resolveRound, buffer size=${buffer.size}")
             if (GameEngine.isOver(game)) {
                 observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
             }
             replayBuffered()
+            refreshFurniture()
             round = game.currentRound
             touchedThisRound.clear()
             actedThisRound.clear()
             wardenUsedThisRound = false
             resetMovesLeft()
-            android.util.Log.d("Tilewarden", "nextRound() finished. new round=$round")
         } finally {
             isAnimating = false
         }
@@ -477,7 +472,6 @@ class GameSession(
         }
         pits.clear()
         pits.addAll(game.board.pits)
-        android.util.Log.d("Tilewarden", "furniture: pits=${game.board.pits} crates=${obstacles.toList()}")
     }
 
     private fun rebuildPiecesFromGame() {
@@ -501,17 +495,12 @@ class GameSession(
     }
 
     private suspend fun replayBuffered() = coroutineScope {
-        android.util.Log.d("Tilewarden", "replayBuffered START size=${buffer.size}")
-        var processed = 0
         while (buffer.isNotEmpty()) {
             val event = buffer.removeFirst()
-            android.util.Log.d("Tilewarden", "  event[$processed] = ${event::class.simpleName}")
             describe(event).takeIf { it.isNotEmpty() }?.let { log.add(it) }
             applyEventToPieces(event)
             delay(durationFor(event))
-            processed++
         }
-        android.util.Log.d("Tilewarden", "replayBuffered END processed=$processed")
     }
 
     private fun CoroutineScope.applyEventToPieces(event: GameEvent) {
@@ -591,6 +580,30 @@ class GameSession(
                 }
                 safePlay(SoundId.DEATH)
             }
+            is GameEvent.TilesSlid -> {
+                // The monsters used their Warden Action. Mirror the slide
+                // into the visible state with the same wrap rule the board
+                // applied; Compose animates the ride.
+                val lineLength = if (event.axis == Axis.ROW) boardColumns else boardRows
+                fun slid(row: Int, col: Int): Pair<Int, Int>? {
+                    val onLine = if (event.axis == Axis.ROW) row == event.index else col == event.index
+                    if (!onLine) return null
+                    val coord = if (event.axis == Axis.ROW) col else row
+                    val wrapped = ((coord + event.delta) % lineLength + lineLength) % lineLength
+                    return if (event.axis == Axis.ROW) row to wrapped else wrapped to col
+                }
+                for (i in pieces.indices) {
+                    slid(pieces[i].row, pieces[i].column)?.let { (r, c) ->
+                        pieces[i] = pieces[i].copy(row = r, column = c)
+                    }
+                }
+                for (i in obstacles.indices) {
+                    slid(obstacles[i].row, obstacles[i].column)?.let { (r, c) ->
+                        obstacles[i] = obstacles[i].copy(row = r, column = c)
+                    }
+                }
+                safePlay(SoundId.ATTACK_SWING)
+            }
             is GameEvent.GameEnded -> {
                 isOver = true
                 winner = event.winner
@@ -619,6 +632,7 @@ class GameSession(
         is GameEvent.Damaged        -> DAMAGE_MS
         is GameEvent.Died           -> DEATH_MS
         is GameEvent.FellInPit      -> DEATH_MS
+        is GameEvent.TilesSlid      -> 550L
         else                        -> MISC_MS
     }
 
@@ -638,6 +652,16 @@ class GameSession(
         is GameEvent.Damaged        -> "  ${event.character.name} takes ${event.wounds} wound(s)"
         is GameEvent.Died           -> "  ${event.character.name} DIES"
         is GameEvent.FellInPit      -> "  ${event.character.name} falls into a pit!"
+        is GameEvent.TilesSlid      -> {
+            val axisName = if (event.axis == Axis.ROW) "row" else "column"
+            val dirName = when {
+                event.axis == Axis.ROW && event.delta > 0 -> "right"
+                event.axis == Axis.ROW                    -> "left"
+                event.delta > 0                           -> "down"
+                else                                      -> "up"
+            }
+            "Monsters slide $axisName ${event.index} $dirName!"
+        }
         is GameEvent.GameEnded      -> "=== GAME END — winner: ${event.winner} ==="
     }
 }

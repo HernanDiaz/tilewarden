@@ -55,6 +55,14 @@ sealed class GameEvent {
      *  removed from the game. */
     data class FellInPit(val character: Character) : GameEvent()
 
+    /** The monster side used its Warden Action: the given line slid one
+     *  square. Published BEFORE any resulting [FellInPit] events. */
+    data class TilesSlid(
+        val axis: Axis,
+        val index: Int,
+        val delta: Int,
+    ) : GameEvent()
+
     /** The game has ended; [winner] indicates the side with most body left. */
     data class GameEnded(val winner: Side) : GameEvent()
 }
@@ -93,6 +101,9 @@ object ConsoleGameObserver : GameObserver {
             is GameEvent.Damaged        -> "  ${event.character.name} takes ${event.wounds} wound(s)"
             is GameEvent.Died           -> "  ${event.character.name} DIES"
             is GameEvent.FellInPit      -> "  ${event.character.name} falls into a pit!"
+            is GameEvent.TilesSlid      ->
+                "Monsters slide ${if (event.axis == Axis.ROW) "row" else "column"} " +
+                    "${event.index} (${if (event.delta > 0) "+" else "-"}1)"
             is GameEvent.GameEnded      -> "=== GAME END — winner: ${event.winner} ==="
         }
         if (text.isNotEmpty()) println(text)
