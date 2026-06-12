@@ -17,6 +17,12 @@ class Board(val rows: Int, val columns: Int) {
     private val squares: Array<Array<Square>> =
         Array(rows) { Array(columns) { Square() } }
 
+    private val pitSet = LinkedHashSet<XYLocation>()
+
+    /** Open pits in the dungeon floor. Pits never move — they are holes in
+     *  the world itself, not tiles — so a slide can push a piece onto one. */
+    val pits: Set<XYLocation> get() = pitSet
+
     /** Square at [location]. Assumes the location is already in bounds. */
     private fun squareAt(location: XYLocation): Square =
         squares[location.x][location.y]
@@ -29,6 +35,29 @@ class Board(val rows: Int, val columns: Int) {
     fun isFree(location: XYLocation): Boolean =
         isInBounds(location) && squareAt(location).isEmpty
 
+    /** `true` if a piece may voluntarily step onto [location]:
+     *  in bounds, empty, and not an open pit. */
+    fun isWalkable(location: XYLocation): Boolean =
+        isFree(location) && location !in pitSet
+
+    /** `true` if there is an open pit at [location]. */
+    fun isPit(location: XYLocation): Boolean = location in pitSet
+
+    /**
+     * Open a pit at [location]. Fails (returns `false`) out of bounds, on
+     * an occupied square, or where a pit already is.
+     */
+    fun addPit(location: XYLocation): Boolean {
+        if (!isFree(location) || location in pitSet) return false
+        pitSet.add(location)
+        return true
+    }
+
+    /** Close the pit at [location] (e.g. plugged by a crate). */
+    fun removePit(location: XYLocation) {
+        pitSet.remove(location)
+    }
+
     /**
      * Remove a piece from the board. No-op if the piece was already off-board.
      */
@@ -39,13 +68,16 @@ class Board(val rows: Int, val columns: Int) {
     }
 
     /**
-     * Move [piece] to [destination].
+     * Move [piece] to [destination]. This is VOLUNTARY movement — nothing
+     * walks into an open pit on purpose, so pit squares are refused. Only
+     * [slideLine] (forced movement) can land a piece on a pit.
      *
      * @return `true` if the move happened, `false` if [destination] is
-     *   out of bounds or already occupied. On failure the board is unchanged.
+     *   out of bounds, occupied, or an open pit. On failure the board is
+     *   unchanged.
      */
     fun movePiece(piece: Piece, destination: XYLocation): Boolean {
-        if (!isFree(destination)) return false
+        if (!isWalkable(destination)) return false
         removePiece(piece)
         piece.position = destination
         squareAt(destination).piece = piece

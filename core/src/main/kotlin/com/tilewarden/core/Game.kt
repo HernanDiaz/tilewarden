@@ -17,6 +17,8 @@ class Game(
     boardColumns: Int,
     val totalRounds: Int,
     val observer: GameObserver = SilentGameObserver,
+    numObstacles: Int = 0,
+    val numPits: Int = 0,
 ) {
     val board: Board = Board(boardRows, boardColumns)
     val statistics: Statistics = Statistics()
@@ -29,10 +31,17 @@ class Game(
     /** Live (un-killed) characters in turn order. */
     val characters: List<Character> get() = _characters
 
+    private val _obstacles: MutableList<Obstacle> = mutableListOf()
+
+    /** Crates still standing on the board. */
+    val obstacles: List<Obstacle> get() = _obstacles
+
     init {
         require(numHeroes >= 0) { "numHeroes must be non-negative" }
         require(numMonsters >= 0) { "numMonsters must be non-negative" }
         require(totalRounds >= 1) { "totalRounds must be at least 1" }
+        require(numObstacles >= 0) { "numObstacles must be non-negative" }
+        require(numPits >= 0) { "numPits must be non-negative" }
 
         repeat(numHeroes) { idx ->
             val hero: Hero = if (Dice.roll() % 2 == 0)
@@ -48,6 +57,9 @@ class Game(
                 Goblin("Goblin $idx")
             _characters.add(monster)
         }
+        repeat(numObstacles) { idx ->
+            _obstacles.add(Obstacle("Crate $idx"))
+        }
     }
 
     /** Push an event to the registered observer. */
@@ -61,6 +73,11 @@ class Game(
      */
     fun removeCharacter(character: Character) {
         _characters.remove(character)
+    }
+
+    /** Remove [obstacle] from the roster (e.g. it fell into a pit). */
+    fun removeObstacle(obstacle: Obstacle) {
+        _obstacles.remove(obstacle)
     }
 
     override fun toString(): String = buildString {

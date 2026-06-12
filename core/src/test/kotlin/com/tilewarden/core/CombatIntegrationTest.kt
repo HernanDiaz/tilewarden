@@ -146,7 +146,9 @@ class CombatIntegrationTest {
         val hero = game.characters.single()
         game.board.movePiece(hero, XYLocation(3, 3))
 
-        val budget = 4
+        // actionMove clamps the budget to the character's own moves
+        // (2-3 since the movement rebalance), so ask for exactly that.
+        val budget = hero.moves
         val moved = hero.actionMove(game, maxSquares = budget)
         // On a near-empty 7x7 it should move the full budget.
         assertEquals(budget, moved)

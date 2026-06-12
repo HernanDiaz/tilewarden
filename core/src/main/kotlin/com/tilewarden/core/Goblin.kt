@@ -12,7 +12,7 @@ class Goblin(name: String) : Monster(
     override val spriteId: String = "goblin"
 
     companion object {
-        const val MOVES = 10
+        const val MOVES = 3
         const val ATTACK = 2
         const val DEFENSE = 1
         const val BODY = 1

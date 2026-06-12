@@ -14,7 +14,7 @@ class Dwarf(name: String, playerName: String) : Hero(
     override val spriteId: String = "dwarf"
 
     companion object {
-        const val MOVES = 6
+        const val MOVES = 2
         const val ATTACK = 1
         const val DEFENSE = 2
         const val BODY = 7

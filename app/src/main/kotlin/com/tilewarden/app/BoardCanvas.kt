@@ -86,6 +86,8 @@ fun BoardCanvas(
     rows: Int,
     columns: Int,
     pieces: List<PieceRender>,
+    obstacles: List<ObstacleRender> = emptyList(),
+    pits: List<XYLocation> = emptyList(),
     dyingPieces: List<String>,
     attackingPieces: List<String>,
     damageBubbles: List<DamageBubble>,
@@ -143,6 +145,10 @@ fun BoardCanvas(
 
     // A single floor tile used everywhere in the playable area.
     val floorTile = ImageBitmap.imageResource(R.drawable.floor_1)
+    // Dungeon furniture: open pits (16x16 tile) and crates (16x24,
+    // anchored to the cell bottom like the humanoid sprites).
+    val pitTile   = ImageBitmap.imageResource(R.drawable.pit_hole)
+    val crateTile = ImageBitmap.imageResource(R.drawable.obstacle_crate)
     // Only two wall tiles are used now: the dark-strip remate at the top
     // of every wall and the plain brick body underneath. No sides, no
     // corners — the room is open on the left and right.
@@ -176,6 +182,23 @@ fun BoardCanvas(
                 label = "alpha_${piece.name}",
             )
             AnimatedPiece(piece, animCol, animRow, deathAlpha)
+        }
+    }
+
+    // Crates animate their ride along a slide just like characters do.
+    val animatedObstacles: List<AnimatedObstacle> = obstacles.map { o ->
+        key(o.name) {
+            val animCol by animateFloatAsState(
+                targetValue = o.column.toFloat(),
+                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
+                label = "ocol_${o.name}",
+            )
+            val animRow by animateFloatAsState(
+                targetValue = o.row.toFloat(),
+                animationSpec = tween(MOVE_ANIMATION_MS, easing = FastOutSlowInEasing),
+                label = "orow_${o.name}",
+            )
+            AnimatedObstacle(animCol, animRow)
         }
     }
 
@@ -312,6 +335,38 @@ fun BoardCanvas(
                 // Bottom remate overlays the last floor row.
                 drawTile(wallTopMid, renderRow = renderRows - 2, renderCol = rc, tileSizePx = tileSizePx)
                 drawTile(wallMid,    renderRow = renderRows - 1, renderCol = rc, tileSizePx = tileSizePx)
+            }
+
+            // 2.5) Open pits — holes in the world, drawn over the floor.
+            // Pits never move; only pieces ride slides.
+            for (pit in pits) {
+                drawTile(
+                    bitmap = pitTile,
+                    renderRow = pit.x + playRowOffset,
+                    renderCol = pit.y + playColOffset,
+                    tileSizePx = tileSizePx,
+                )
+            }
+
+            // 2.7) Crates: bottom-anchored sprites that slide with their
+            // line. Drawn before characters so heroes pass in front.
+            for (ao in animatedObstacles) {
+                val spriteScale = tileSizePx * 0.95f / crateTile.width.toFloat()
+                val scaledW = crateTile.width  * spriteScale
+                val scaledH = crateTile.height * spriteScale
+                val ocx = (ao.column + playColOffset) * tileSizePx + tileSizePx / 2f
+                val cellBottom = (ao.row + playRowOffset) * tileSizePx + tileSizePx
+                drawImage(
+                    image = crateTile,
+                    srcOffset = IntOffset.Zero,
+                    srcSize = IntSize(crateTile.width, crateTile.height),
+                    dstOffset = IntOffset(
+                        (ocx - scaledW / 2f).roundToInt(),
+                        (cellBottom - scaledH).roundToInt(),
+                    ),
+                    dstSize = IntSize(scaledW.roundToInt(), scaledH.roundToInt()),
+                    filterQuality = FilterQuality.None,
+                )
             }
 
             // 3) Valid-move tints over playable floor cells.
@@ -513,6 +568,11 @@ private data class AnimatedPiece(
     val column: Float,
     val row: Float,
     val alpha: Float,
+)
+
+private data class AnimatedObstacle(
+    val column: Float,
+    val row: Float,
 )
 
 @Composable

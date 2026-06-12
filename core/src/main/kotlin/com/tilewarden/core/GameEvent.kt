@@ -51,6 +51,10 @@ sealed class GameEvent {
     /** [character] reached zero body and is removed from the board. */
     data class Died(val character: Character) : GameEvent()
 
+    /** [character] was pushed into an open pit by a tile slide and is
+     *  removed from the game. */
+    data class FellInPit(val character: Character) : GameEvent()
+
     /** The game has ended; [winner] indicates the side with most body left. */
     data class GameEnded(val winner: Side) : GameEvent()
 }
@@ -88,6 +92,7 @@ object ConsoleGameObserver : GameObserver {
             is GameEvent.AttackBlocked  -> "  ${event.defender.name} blocks the attack"
             is GameEvent.Damaged        -> "  ${event.character.name} takes ${event.wounds} wound(s)"
             is GameEvent.Died           -> "  ${event.character.name} DIES"
+            is GameEvent.FellInPit      -> "  ${event.character.name} falls into a pit!"
             is GameEvent.GameEnded      -> "=== GAME END — winner: ${event.winner} ==="
         }
         if (text.isNotEmpty()) println(text)

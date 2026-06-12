@@ -146,6 +146,8 @@ fun GameScreen(
                     rows = session.boardRows,
                     columns = session.boardColumns,
                     pieces = session.pieces,
+                    obstacles = session.obstacles,
+                    pits = session.pits,
                     dyingPieces = session.dyingPieces,
                     attackingPieces = session.attackingPieces,
                     damageBubbles = session.damageBubbles,
@@ -164,9 +166,8 @@ fun GameScreen(
                     },
                     wardenMode = wardenMode,
                     onWardenSlide = { axis, index, delta ->
-                        if (session.wardenSlide(axis, index, delta)) {
-                            wardenMode = false
-                        }
+                        wardenMode = false
+                        scope.launch { session.wardenSlide(axis, index, delta) }
                     },
                 )
             }

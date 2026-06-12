@@ -13,15 +13,16 @@ import kotlin.math.abs
 object GameEngine {
 
     /**
-     * Empty squares immediately N/S/E/W of [character]'s current position.
-     * Returns empty if the character is off-board.
+     * Walkable squares immediately N/S/E/W of [character]'s current
+     * position (in bounds, empty, and not an open pit — nothing steps
+     * into a pit on purpose). Returns empty if the character is off-board.
      */
     fun validPositions(game: Game, character: Character): List<XYLocation> {
         val current = character.position ?: return emptyList()
         // South / West / East / North — original iteration order preserved.
         return listOf(Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.NORTH)
             .map { current + it }
-            .filter { game.board.isFree(it) }
+            .filter { game.board.isWalkable(it) }
     }
 
     /**
@@ -43,10 +44,10 @@ object GameEngine {
         return (dx == 1 && dy == 0) || (dx == 0 && dy == 1)
     }
 
-    /** A character is blocked when no neighbour square is free. */
+    /** A character is blocked when no neighbour square is walkable. */
     fun isBlocked(game: Game, character: Character): Boolean {
         val pos = character.position ?: return true
-        return Direction.entries.none { game.board.isFree(pos + it) }
+        return Direction.entries.none { game.board.isWalkable(pos + it) }
     }
 
     /** A random cardinal direction. */
@@ -54,13 +55,28 @@ object GameEngine {
         Direction.entries[Dice.roll(Direction.entries.size) - 1]
 
     /**
-     * Place every character of [game] on a randomly chosen empty square.
-     * Loops until each finds a valid spot, so the caller must ensure the
-     * board has enough free squares.
+     * Place the dungeon furniture and every character of [game] on
+     * randomly chosen squares: crates first, then pits (on squares that
+     * are still empty), then the characters (who can never start on a
+     * pit — [Board.movePiece] refuses pit squares). Loops until each
+     * finds a valid spot, so the caller must ensure the board has enough
+     * free squares.
      */
     fun placeCharactersRandomly(game: Game) {
         val rows = game.board.rows
         val cols = game.board.columns
+        for (o in game.obstacles) {
+            do {
+                val x = Dice.roll(rows) - 1
+                val y = Dice.roll(cols) - 1
+            } while (!game.board.movePiece(o, XYLocation(x, y)))
+        }
+        repeat(game.numPits) {
+            do {
+                val x = Dice.roll(rows) - 1
+                val y = Dice.roll(cols) - 1
+            } while (!game.board.addPit(XYLocation(x, y)))
+        }
         for (c in game.characters) {
             do {
                 val x = Dice.roll(rows) - 1
@@ -105,6 +121,38 @@ object GameEngine {
     /** Move [game] to the next round. Useful when driving the loop manually. */
     fun advanceRound(game: Game) {
         game.currentRound++
+    }
+
+    /**
+     * Resolve everything that ended up on an open pit after a tile slide:
+     * - A character falls in and dies ([GameEvent.FellInPit] is published;
+     *   the character is removed from board and game).
+     * - A crate falls in and PLUGS the pit — both disappear.
+     *
+     * @return `true` if anything fell.
+     */
+    fun resolvePitFalls(game: Game): Boolean {
+        var anything = false
+        for (o in game.obstacles.toList()) {
+            val pos = o.position ?: continue
+            if (game.board.isPit(pos)) {
+                game.board.removePiece(o)
+                game.removeObstacle(o)
+                game.board.removePit(pos)
+                anything = true
+            }
+        }
+        for (c in game.characters.toList()) {
+            val pos = c.position ?: continue
+            if (game.board.isPit(pos)) {
+                game.notify(GameEvent.FellInPit(c))
+                c.body = 0
+                game.board.removePiece(c)
+                game.removeCharacter(c)
+                anything = true
+            }
+        }
+        return anything
     }
 
     /**

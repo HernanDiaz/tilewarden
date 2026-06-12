@@ -51,6 +51,14 @@ data class DamageBubble(
     val amount: Int,
 )
 
+/** A crate on the board — blocks movement, rides tile slides. */
+@Immutable
+data class ObstacleRender(
+    val name: String,
+    val row: Int,
+    val column: Int,
+)
+
 /**
  * Compose state holder that drives a match.
  *
@@ -96,6 +104,12 @@ class GameSession(
     val damageBubbles:    SnapshotStateList<DamageBubble> = mutableStateListOf()
     val attackingPieces:  SnapshotStateList<String>       = mutableStateListOf()
     val dyingPieces:      SnapshotStateList<String>       = mutableStateListOf()
+
+    /** Crates on the board. They ride slides; one can plug a pit. */
+    val obstacles: SnapshotStateList<ObstacleRender> = mutableStateListOf()
+
+    /** Open pits. Static — pits never ride a slide. */
+    val pits: SnapshotStateList<XYLocation> = mutableStateListOf()
 
     /** Heroes the player has acted with at least once this round. The AI
      * skips them on Next round so it doesn't move them again. */
@@ -159,6 +173,7 @@ class GameSession(
     init {
         buffer.clear()
         rebuildPiecesFromGame()
+        refreshFurniture()
         resetMovesLeft()
         log.add("=== GAME START ===")
     }
@@ -214,6 +229,7 @@ class GameSession(
         game = buildFreshGame()
         buffer.clear()
         rebuildPiecesFromGame()
+        refreshFurniture()
         resetMovesLeft()
         round = game.currentRound
         log.add("=== GAME START ===")
@@ -256,7 +272,7 @@ class GameSession(
         if ((movesLeft[name] ?: 0) <= 0) return false
         val hero = game.characters.find { it.name == name } ?: return false
         val from = hero.position ?: return false
-        if (!game.board.isFree(target)) return false
+        if (!game.board.isWalkable(target)) return false  // occupied or pit
         if (!GameEngine.atRange(from, target)) return false  // 4-neighbour only
 
         // Mutate game state
@@ -333,20 +349,31 @@ class GameSession(
      * square (wrapping at the edges), carrying every piece on it. Once
      * per round; shares the round with normal hero moves and attacks.
      *
+     * Anything pushed onto an open pit falls: characters die
+     * ([GameEvent.FellInPit] replays with the usual death effects),
+     * crates plug the pit and both disappear.
+     *
      * @return `true` if the slide happened.
      */
-    fun wardenSlide(axis: Axis, index: Int, delta: Int): Boolean {
+    suspend fun wardenSlide(axis: Axis, index: Int, delta: Int): Boolean {
         if (isAnimating || isOver || wardenUsedThisRound) return false
         if (!game.board.slideLine(axis, index, delta)) return false
         wardenUsedThisRound = true
 
         // Mirror every character's new board position into the visible
-        // state; Compose animates the slide for us.
+        // state; Compose animates the slide for us. Crates too.
         for (i in pieces.indices) {
             val c = game.characters.find { it.name == pieces[i].name } ?: continue
             val pos = c.position ?: continue
             if (pieces[i].row != pos.x || pieces[i].column != pos.y) {
                 pieces[i] = pieces[i].copy(row = pos.x, column = pos.y)
+            }
+        }
+        for (i in obstacles.indices) {
+            val o = game.obstacles.find { it.name == obstacles[i].name } ?: continue
+            val pos = o.position ?: continue
+            if (obstacles[i].row != pos.x || obstacles[i].column != pos.y) {
+                obstacles[i] = obstacles[i].copy(row = pos.x, column = pos.y)
             }
         }
         // Selection survives but its legal moves just changed under it;
@@ -362,6 +389,29 @@ class GameSession(
         }
         log.add("Warden slides $axisName $index $dirName")
         safePlay(SoundId.ATTACK_SWING)
+
+        // Resolve pit falls AFTER the slide animation has time to play,
+        // so the victim visibly arrives over the hole before vanishing.
+        isAnimating = true
+        try {
+            delay(450)
+            buffer.clear()
+            val crateCountBefore = game.obstacles.size
+            if (GameEngine.resolvePitFalls(game)) {
+                if (game.obstacles.size < crateCountBefore) {
+                    log.add("  a crate plugs the pit")
+                }
+                replayBuffered()
+                refreshFurniture()
+                if (GameEngine.isOver(game)) {
+                    buffer.clear()
+                    observer.onEvent(GameEvent.GameEnded(GameEngine.winner(game)))
+                    replayBuffered()
+                }
+            }
+        } finally {
+            isAnimating = false
+        }
         return true
     }
 
@@ -408,9 +458,26 @@ class GameSession(
             boardColumns = boardColumns,
             totalRounds = totalRounds,
             observer = observer,
+            // Density tuned for a 7x10 board: 5 crates, 3 pits. Scales
+            // with area for other board sizes.
+            numObstacles = (boardRows * boardColumns) / 14,
+            numPits = (boardRows * boardColumns) / 23,
         )
         GameEngine.placeCharactersRandomly(g)
         return g
+    }
+
+    /** Mirror crate positions and open pits from the engine into the
+     *  Compose-observable lists. */
+    private fun refreshFurniture() {
+        obstacles.clear()
+        for (o in game.obstacles) {
+            val pos = o.position ?: continue
+            obstacles.add(ObstacleRender(o.name, pos.x, pos.y))
+        }
+        pits.clear()
+        pits.addAll(game.board.pits)
+        android.util.Log.d("Tilewarden", "furniture: pits=${game.board.pits} crates=${obstacles.toList()}")
     }
 
     private fun rebuildPiecesFromGame() {
@@ -514,6 +581,16 @@ class GameSession(
                 }
                 safePlay(SoundId.DEATH)
             }
+            is GameEvent.FellInPit -> {
+                val name = event.character.name
+                if (name !in dyingPieces) dyingPieces.add(name)
+                launch {
+                    delay(DEATH_MS)
+                    pieces.removeAll { it.name == name }
+                    dyingPieces.remove(name)
+                }
+                safePlay(SoundId.DEATH)
+            }
             is GameEvent.GameEnded -> {
                 isOver = true
                 winner = event.winner
@@ -541,6 +618,7 @@ class GameSession(
         is GameEvent.AttackBlocked  -> BLOCK_MS
         is GameEvent.Damaged        -> DAMAGE_MS
         is GameEvent.Died           -> DEATH_MS
+        is GameEvent.FellInPit      -> DEATH_MS
         else                        -> MISC_MS
     }
 
@@ -559,6 +637,7 @@ class GameSession(
         is GameEvent.AttackBlocked  -> "  ${event.defender.name} blocks the attack"
         is GameEvent.Damaged        -> "  ${event.character.name} takes ${event.wounds} wound(s)"
         is GameEvent.Died           -> "  ${event.character.name} DIES"
+        is GameEvent.FellInPit      -> "  ${event.character.name} falls into a pit!"
         is GameEvent.GameEnded      -> "=== GAME END — winner: ${event.winner} ==="
     }
 }

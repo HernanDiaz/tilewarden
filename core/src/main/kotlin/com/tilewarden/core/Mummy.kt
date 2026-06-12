@@ -12,7 +12,7 @@ class Mummy(name: String) : Monster(
     override val spriteId: String = "mummy"
 
     companion object {
-        const val MOVES = 4
+        const val MOVES = 2
         const val ATTACK = 3
         const val DEFENSE = 4
         const val BODY = 2
