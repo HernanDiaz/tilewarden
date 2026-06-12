@@ -56,19 +56,6 @@ fun GameScreen(
         onDispose { audio.setAmbientActive(false) }
     }
 
-    // Watchdog DISABLED while we diagnose the round-2 audio dropout.
-    // The previous implementation could enter a release/recreate loop if
-    // isAmbientPlaying() ever returned false transiently.
-    // LaunchedEffect(audio) {
-    //     while (true) {
-    //         delay(2000)
-    //         if (!audio.muted && !audio.isAmbientPlaying()) {
-    //             audio.setAmbientActive(false)
-    //             audio.setAmbientActive(true)
-    //         }
-    //     }
-    // }
-
     val round         = session.round
     val isOver        = session.isOver
     val winner        = session.winner

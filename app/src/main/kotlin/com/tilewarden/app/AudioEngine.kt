@@ -1,15 +1,11 @@
 package com.tilewarden.app
 
-import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.media.SoundPool
+import android.util.Log
 import androidx.compose.runtime.mutableStateOf
-import java.io.BufferedOutputStream
-import java.io.DataOutputStream
-import java.io.File
-import java.io.FileOutputStream
+import kotlin.concurrent.thread
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -18,6 +14,15 @@ import kotlin.random.Random
 /** Sample rate of every synthesised buffer. 22050 Hz keeps PCM small without
  *  sacrificing perceptible quality for short, retro-feel SFX. */
 private const val SAMPLE_RATE = 22050
+
+/** Samples mixed per write. 1024 ≈ 46 ms of latency — imperceptible for
+ *  turn-based SFX, long enough to keep the mixer thread cheap. */
+private const val MIX_FRAME = 1024
+
+private const val TAG = "Tilewarden"
+
+/** Ambient drone gain relative to SFX at 1.0. */
+private const val AMBIENT_GAIN = 0.5f
 
 /** All the discrete sound effects the game can request. */
 enum class SoundId {
@@ -31,29 +36,45 @@ enum class SoundId {
 }
 
 /**
- * Plays short 8-bit-feel sound effects and a low dungeon-drone ambient loop.
+ * Synthesised 8-bit-style audio with a tiny software mixer.
  *
- * Two distinct pipelines:
+ * Architecture (third iteration — the robust one):
  *
- * - **SFX**: each `synthXxx` helper renders a 16-bit mono PCM buffer; on
- *   construction those buffers are written to `cacheDir/sfx_*.wav` and
- *   loaded into a single [SoundPool]. [play] just delegates to
- *   `soundPool.play`. SoundPool manages its own stream pool, so there's
- *   no AudioTrack leak risk — the previous per-SFX `AudioTrack` strategy
- *   was unreliable (slots accumulated across rounds until the HAL refused
- *   new tracks).
+ * - **One process-wide singleton** ([AudioEngine.get]). Earlier versions
+ *   were remembered in composition, so every activity recreation stacked
+ *   another engine + sound pool.
  *
- * - **Ambient**: a single 8-second drone buffer played by a persistent
- *   [AudioTrack] in `MODE_STATIC` with `setLoopPoints(0, n, -1)`. SoundPool
- *   isn't a great fit for an indefinitely-looping background drone, and
- *   one persistent track is trivial to manage. [isAmbientPlaying] lets a
- *   watchdog detect HAL evictions and re-arm.
+ * - **One persistent AudioTrack in MODE_STREAM**, owned by a dedicated
+ *   mixer thread. The thread mixes whatever voices are active (SFX
+ *   one-shots + the looping ambient drone) into a small frame buffer and
+ *   blocking-writes it to the track forever. When nothing is playing it
+ *   writes silence — that's normal for games and keeps the stream warm.
  *
- * [muted] is Compose-observable. Flipping it to true silences SFX *and*
- * suspends the ambient; flipping it back resumes ambient if a previous
+ *   Why not per-SFX AudioTracks? They leaked HAL slots (audio died after
+ *   a round). Why not MODE_STATIC? It wedged the emulator's audioserver
+ *   hard enough to ANR the app at startup. Why not SoundPool? Its
+ *   MediaCodec decode sporadically failed on the emulator (status
+ *   -2147483648 for random samples) and loads took seconds.
+ *
+ * - **Everything stays in memory.** PCM is synthesised once on the mixer
+ *   thread at startup; no files, no decoders, no binder traffic beyond
+ *   the single track.
+ *
+ * [muted] is Compose-observable. Muting clears live SFX voices and
+ * detaches the ambient voice; unmuting re-attaches ambient if a previous
  * [setAmbientActive] call asked for it.
  */
-class AudioEngine(context: Context) {
+class AudioEngine private constructor() {
+
+    companion object {
+        @Volatile private var instance: AudioEngine? = null
+
+        /** Process-wide singleton. Safe to call from any thread. */
+        fun get(): AudioEngine =
+            instance ?: synchronized(AudioEngine::class.java) {
+                instance ?: AudioEngine().also { instance = it }
+            }
+    }
 
     private val _muted = mutableStateOf(false)
     var muted: Boolean
@@ -61,167 +82,159 @@ class AudioEngine(context: Context) {
         set(value) {
             if (_muted.value == value) return
             _muted.value = value
-            if (value) {
-                stopAmbient()
-                soundPool.autoPause()
-            } else {
-                soundPool.autoResume()
-                if (ambientWanted) startAmbient()
+            synchronized(voices) {
+                if (value) voices.clear()
             }
         }
 
-    /** True iff the caller has asked for ambient to be on; honoured as long
-     *  as we're not muted. Survives mute/unmute toggles. */
-    private var ambientWanted: Boolean = false
-    private var ambientTrack: AudioTrack? = null
+    /** True iff the game screen wants the ambient drone audible. */
+    @Volatile private var ambientWanted: Boolean = false
 
-    private val ambientPcm: ShortArray = synthAmbientLoop()
+    /** A sound currently being mixed. One-shots are removed at the end of
+     *  their buffer; looping voices wrap around. */
+    private class Voice(
+        val samples: ShortArray,
+        val gain: Float,
+        val loop: Boolean,
+    ) {
+        var pos: Int = 0
+    }
 
-    private val soundPool: SoundPool = SoundPool.Builder()
-        .setMaxStreams(8)
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_GAME)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-        )
-        .build()
+    private val voices = ArrayList<Voice>(8)
 
-    /** SoundId → SoundPool sample id (handed back by [SoundPool.load]). */
-    private val sfxIds: Map<SoundId, Int>
+    /** Filled by the mixer thread before it opens the AudioTrack. */
+    @Volatile private var pcm: Map<SoundId, ShortArray> = emptyMap()
+    @Volatile private var ambientPcm: ShortArray = ShortArray(0)
 
     init {
-        // Materialise every SFX as a WAV in cacheDir and hand it to the pool.
-        // Files are deterministic and small (<50 KB each); rewriting on every
-        // launch is fine and keeps the code stateless.
-        val cacheDir = context.cacheDir
-        sfxIds = SoundId.entries.associateWith { id ->
-            val file = File(cacheDir, "sfx_${id.name}.wav")
-            writeWav(file, synthFor(id))
-            soundPool.load(file.absolutePath, 1)
-        }
+        thread(name = "tilewarden-mixer", isDaemon = true) { mixerLoop() }
     }
 
     fun play(id: SoundId) {
-        if (muted) {
-            android.util.Log.d("Tilewarden", "play($id) skipped: muted")
-            return
-        }
-        val sampleId = sfxIds[id]
-        if (sampleId == null) {
-            android.util.Log.w("Tilewarden", "play($id) skipped: no sample id")
-            return
-        }
-        try {
-            val streamId = soundPool.play(sampleId, 1f, 1f, /*priority*/ 1, /*loop*/ 0, /*rate*/ 1f)
-            android.util.Log.d("Tilewarden", "play($id) sampleId=$sampleId -> streamId=$streamId")
-        } catch (t: Throwable) {
-            android.util.Log.w("Tilewarden", "play($id) threw", t)
+        if (muted) return
+        val samples = pcm[id] ?: return   // synthesis not finished yet
+        synchronized(voices) {
+            // Cap concurrent voices to keep the mix clean; drop the oldest
+            // one-shot if we're full (never the ambient loop).
+            if (voices.count { !it.loop } >= 6) {
+                voices.indexOfFirst { !it.loop }.takeIf { it >= 0 }?.let { voices.removeAt(it) }
+            }
+            voices.add(Voice(samples, gain = 1f, loop = false))
         }
     }
 
-    /**
-     * Declare whether ambient should be playing. Idempotent: only kicks the
-     * track when state actually changes. Honours [muted] — when muted, we
-     * remember the intent ([ambientWanted]) and resume on unmute.
-     */
+    /** Declare whether ambient should be playing. Idempotent; honours
+     *  [muted]; the intent survives mute/unmute. */
     fun setAmbientActive(active: Boolean) {
-        if (ambientWanted == active && (active.not() == (ambientTrack == null))) return
         ambientWanted = active
-        if (active && !muted) startAmbient()
-        else if (!active) stopAmbient()
-    }
-
-    /** True iff the persistent ambient track is currently live. Used by the
-     *  game screen to re-arm ambient if the audio HAL evicted it (which can
-     *  happen under transient pressure even when we manage our own tracks). */
-    fun isAmbientPlaying(): Boolean {
-        val t = ambientTrack ?: return false
-        return try {
-            t.playState == AudioTrack.PLAYSTATE_PLAYING
-        } catch (_: Throwable) {
-            false
+        synchronized(voices) {
+            val current = voices.firstOrNull { it.loop }
+            if (!active && current != null) voices.remove(current)
         }
     }
 
-    private fun startAmbient() {
-        if (ambientTrack != null) return
-        val samples = ambientPcm
-        try {
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_GAME)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(samples.size * 2)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .build()
-            track.write(samples, 0, samples.size)
-            track.setLoopPoints(0, samples.size, -1)  // forever
-            track.play()
-            ambientTrack = track
-        } catch (_: Throwable) {
-            ambientTrack = null
+    // ---- Mixer ----
+
+    private fun mixerLoop() {
+        // Synthesis happens here so the constructor (main thread) returns
+        // instantly and the app can never ANR on audio init.
+        pcm = SoundId.entries.associateWith { synthFor(it) }
+        ambientPcm = synthAmbientLoop()
+        Log.d(TAG, "mixer: synthesis done (${pcm.size} sfx + ambient)")
+
+        val mixBuf = FloatArray(MIX_FRAME)
+        val outBuf = ShortArray(MIX_FRAME)
+
+        while (true) {
+            val track = openTrack()
+            if (track == null) {
+                Log.w(TAG, "mixer: could not open AudioTrack, retrying in 3s")
+                Thread.sleep(3000)
+                continue
+            }
+            Log.d(TAG, "mixer: AudioTrack open, streaming")
+            try {
+                track.play()
+                while (true) {
+                    // (Re)attach the ambient voice when wanted and absent.
+                    if (ambientWanted && !muted && ambientPcm.isNotEmpty()) {
+                        synchronized(voices) {
+                            if (voices.none { it.loop }) {
+                                voices.add(Voice(ambientPcm, gain = AMBIENT_GAIN, loop = true))
+                            }
+                        }
+                    }
+                    mixFrame(mixBuf, outBuf)
+                    val written = track.write(outBuf, 0, MIX_FRAME)
+                    if (written < 0) {
+                        Log.w(TAG, "mixer: write returned $written, reopening track")
+                        break
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "mixer: track died, reopening", t)
+            } finally {
+                try { track.release() } catch (_: Throwable) {}
+            }
+            Thread.sleep(250)
         }
     }
 
-    private fun stopAmbient() {
-        ambientTrack?.let { t ->
-            try { t.pause() }   catch (_: Throwable) {}
-            try { t.flush() }   catch (_: Throwable) {}
-            try { t.release() } catch (_: Throwable) {}
+    /** Mix all active voices into [outBuf]. Finished one-shots are removed. */
+    private fun mixFrame(mixBuf: FloatArray, outBuf: ShortArray) {
+        java.util.Arrays.fill(mixBuf, 0f)
+        synchronized(voices) {
+            val it = voices.iterator()
+            while (it.hasNext()) {
+                val v = it.next()
+                var i = 0
+                while (i < MIX_FRAME) {
+                    if (v.pos >= v.samples.size) {
+                        if (v.loop) v.pos = 0 else break
+                    }
+                    mixBuf[i] += v.samples[v.pos] * v.gain
+                    v.pos++
+                    i++
+                }
+                if (!v.loop && v.pos >= v.samples.size) it.remove()
+            }
         }
-        ambientTrack = null
-    }
-
-    // ---- WAV writer ----
-
-    /** Minimal RIFF/WAVE writer for 16-bit signed-PCM mono at [SAMPLE_RATE].
-     *  Used to materialise synthesised buffers for [SoundPool.load]. */
-    private fun writeWav(file: File, samples: ShortArray) {
-        val numChannels = 1
-        val bitsPerSample = 16
-        val byteRate = SAMPLE_RATE * numChannels * bitsPerSample / 8
-        val blockAlign = numChannels * bitsPerSample / 8
-        val dataSize = samples.size * 2
-        val riffSize = 36 + dataSize
-        DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { out ->
-            out.writeBytes("RIFF")
-            out.writeIntLE(riffSize)
-            out.writeBytes("WAVE")
-            out.writeBytes("fmt ")
-            out.writeIntLE(16)                          // PCM subchunk size
-            out.writeShortLE(1)                         // PCM format
-            out.writeShortLE(numChannels)
-            out.writeIntLE(SAMPLE_RATE)
-            out.writeIntLE(byteRate)
-            out.writeShortLE(blockAlign)
-            out.writeShortLE(bitsPerSample)
-            out.writeBytes("data")
-            out.writeIntLE(dataSize)
-            for (s in samples) out.writeShortLE(s.toInt())
+        for (i in 0 until MIX_FRAME) {
+            val s = mixBuf[i]
+            outBuf[i] = when {
+                s >  Short.MAX_VALUE.toFloat() -> Short.MAX_VALUE
+                s <  Short.MIN_VALUE.toFloat() -> Short.MIN_VALUE
+                else                           -> s.toInt().toShort()
+            }
         }
     }
 
-    private fun DataOutputStream.writeIntLE(v: Int) {
-        writeByte(v and 0xFF)
-        writeByte((v ushr 8) and 0xFF)
-        writeByte((v ushr 16) and 0xFF)
-        writeByte((v ushr 24) and 0xFF)
-    }
-
-    private fun DataOutputStream.writeShortLE(v: Int) {
-        writeByte(v and 0xFF)
-        writeByte((v ushr 8) and 0xFF)
+    private fun openTrack(): AudioTrack? = try {
+        val minBuf = AudioTrack.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(maxOf(minBuf, MIX_FRAME * 4))
+            .build()
+    } catch (t: Throwable) {
+        Log.w(TAG, "openTrack failed", t)
+        null
     }
 
     // ---- Render helpers ----
