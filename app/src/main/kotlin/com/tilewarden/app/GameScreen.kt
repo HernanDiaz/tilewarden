@@ -47,6 +47,7 @@ fun GameScreen(
 ) {
     var inspected: PieceRender? by remember { mutableStateOf(null) }
     var showSummary by remember { mutableStateOf(false) }
+    var wardenMode by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Ambient drone runs as long as we're on the game screen. Honours the
@@ -73,6 +74,11 @@ fun GameScreen(
         }
     }
 
+    // Warden mode can't survive a replay or game over — drop it.
+    LaunchedEffect(isAnimating, isOver) {
+        if (isAnimating || isOver) wardenMode = false
+    }
+
     // Auto-pop the summary modal once the game ends. Small delay so the last
     // replay frame is visible before the overlay covers it.
     LaunchedEffect(isOver) {
@@ -84,10 +90,9 @@ fun GameScreen(
         }
     }
 
-    // Auto-advance once every alive hero has fully spent their turn. The
-    // Next round button (in Controls) is the manual fallback when this
-    // condition can't fire — e.g. the player wants to skip a hero entirely
-    // or a hero is stuck without legal moves or targets.
+    // Auto-advance once every alive hero has fully spent their turn AND the
+    // Warden Action is used. If the player doesn't want to slide tiles this
+    // round, Next round (in Controls) skips ahead manually.
     //
     // nextRound() is dispatched into `scope` (the screen-level coroutine
     // scope), NOT awaited inside the LaunchedEffect. If we awaited it here
@@ -95,10 +100,12 @@ fun GameScreen(
     // the keys, interrupting resolveRound + replayBuffered halfway through.
     LaunchedEffect(
         session.actedThisRound.size,
+        session.wardenUsedThisRound,
         session.pieces.size,
         session.isOver,
     ) {
         if (session.isAnimating || session.isOver) return@LaunchedEffect
+        if (!session.wardenUsedThisRound) return@LaunchedEffect
         val aliveHeroes = session.pieces.filter { it.isHero }
         if (aliveHeroes.isEmpty()) return@LaunchedEffect
         if (aliveHeroes.all { it.name in session.actedThisRound }) {
@@ -148,11 +155,17 @@ fun GameScreen(
                     actedHeroes = session.actedThisRound,
                     facingLeft = session.facingLeft,
                     onTileTap = { row, col ->
-                        handleTap(session, row, col, scope)
+                        if (!wardenMode) handleTap(session, row, col, scope)
                     },
                     onTileLongPress = { row, col ->
                         inspected = session.pieces.firstOrNull {
                             it.row == row && it.column == col
+                        }
+                    },
+                    wardenMode = wardenMode,
+                    onWardenSlide = { axis, index, delta ->
+                        if (session.wardenSlide(axis, index, delta)) {
+                            wardenMode = false
                         }
                     },
                 )
@@ -166,6 +179,9 @@ fun GameScreen(
             Controls(
                 isOver = isOver,
                 isAnimating = isAnimating,
+                wardenMode = wardenMode,
+                wardenUsed = session.wardenUsedThisRound,
+                onToggleWarden = { wardenMode = !wardenMode },
                 onNext = { scope.launch { session.nextRound() } },
                 onMenu = onBackToMenu,
                 showSummaryButton = isOver && !showSummary,
@@ -342,6 +358,9 @@ private fun PanelCard(
 private fun Controls(
     isOver: Boolean,
     isAnimating: Boolean,
+    wardenMode: Boolean,
+    wardenUsed: Boolean,
+    onToggleWarden: () -> Unit,
     onNext: () -> Unit,
     onMenu: () -> Unit,
     showSummaryButton: Boolean,
@@ -353,6 +372,20 @@ private fun Controls(
                 onClick = onShowSummary,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Show summary") }
+        }
+        if (!isOver) {
+            if (wardenMode) {
+                Button(
+                    onClick = onToggleWarden,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Drag a row or column to slide it — tap to cancel") }
+            } else {
+                OutlinedButton(
+                    onClick = onToggleWarden,
+                    enabled = !isAnimating && !wardenUsed,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (wardenUsed) "Slide used this round" else "Slide tiles") }
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),

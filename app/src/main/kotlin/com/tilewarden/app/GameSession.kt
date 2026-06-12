@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import com.tilewarden.core.Axis
 import com.tilewarden.core.Dice
 import com.tilewarden.core.Game
 import com.tilewarden.core.GameEngine
@@ -104,6 +105,10 @@ class GameSession(
      * moves or used their attack). The UI fades these out. */
     val actedThisRound: SnapshotStateList<String> = mutableStateListOf()
 
+    /** Whether the once-per-round Warden Action (tile slide) is spent. */
+    var wardenUsedThisRound: Boolean by mutableStateOf(false)
+        private set
+
     /** Initial snapshot of every character that started the game.
      * Used by the end-of-game summary to compute the MVP even after death. */
     val initialPieces: SnapshotStateList<PieceRender> = mutableStateListOf()
@@ -182,6 +187,7 @@ class GameSession(
             round = game.currentRound
             touchedThisRound.clear()
             actedThisRound.clear()
+            wardenUsedThisRound = false
             resetMovesLeft()
             android.util.Log.d("Tilewarden", "nextRound() finished. new round=$round")
         } finally {
@@ -199,6 +205,7 @@ class GameSession(
         dyingPieces.clear()
         touchedThisRound.clear()
         actedThisRound.clear()
+        wardenUsedThisRound = false
         facingLeft.clear()
         attacksByName.clear()
         damageByName.clear()
@@ -319,6 +326,43 @@ class GameSession(
         } finally {
             isAnimating = false
         }
+    }
+
+    /**
+     * The Warden Action: slide a full row or column of the dungeon one
+     * square (wrapping at the edges), carrying every piece on it. Once
+     * per round; shares the round with normal hero moves and attacks.
+     *
+     * @return `true` if the slide happened.
+     */
+    fun wardenSlide(axis: Axis, index: Int, delta: Int): Boolean {
+        if (isAnimating || isOver || wardenUsedThisRound) return false
+        if (!game.board.slideLine(axis, index, delta)) return false
+        wardenUsedThisRound = true
+
+        // Mirror every character's new board position into the visible
+        // state; Compose animates the slide for us.
+        for (i in pieces.indices) {
+            val c = game.characters.find { it.name == pieces[i].name } ?: continue
+            val pos = c.position ?: continue
+            if (pieces[i].row != pos.x || pieces[i].column != pos.y) {
+                pieces[i] = pieces[i].copy(row = pos.x, column = pos.y)
+            }
+        }
+        // Selection survives but its legal moves just changed under it;
+        // deselect to avoid stale highlights.
+        selectedHero = null
+
+        val axisName = if (axis == Axis.ROW) "row" else "column"
+        val dirName = when {
+            axis == Axis.ROW && delta > 0    -> "right"
+            axis == Axis.ROW                 -> "left"
+            delta > 0                        -> "down"
+            else                             -> "up"
+        }
+        log.add("Warden slides $axisName $index $dirName")
+        safePlay(SoundId.ATTACK_SWING)
+        return true
     }
 
     /**

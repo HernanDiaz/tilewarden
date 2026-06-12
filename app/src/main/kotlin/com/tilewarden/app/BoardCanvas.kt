@@ -6,6 +6,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
@@ -45,8 +46,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import com.tilewarden.core.Axis
 import com.tilewarden.core.XYLocation
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val MOVE_ANIMATION_MS = 400
@@ -93,6 +96,8 @@ fun BoardCanvas(
     facingLeft: Map<String, Boolean>,
     onTileTap: (row: Int, column: Int) -> Unit,
     onTileLongPress: (row: Int, column: Int) -> Unit = { _, _ -> },
+    wardenMode: Boolean = false,
+    onWardenSlide: (axis: Axis, index: Int, delta: Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val symbolInk  = Color(0xFF1B1714)
@@ -221,6 +226,43 @@ fun BoardCanvas(
                         val playRow = rr - playRowOffset
                         if (playRow in 0 until rows && playCol in 0 until columns) {
                             onTileLongPress(playRow, playCol)
+                        }
+                    },
+                )
+            }
+            .pointerInput(wardenMode, rows, columns) {
+                // Warden Action gesture: while warden mode is on, dragging
+                // horizontally on a row slides that row, dragging vertically
+                // on a column slides that column. One slide per gesture.
+                if (!wardenMode) return@pointerInput
+                var startRow = -1
+                var startCol = -1
+                var accX = 0f
+                var accY = 0f
+                var fired = false
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        val tileSizePx = size.width.toFloat() / renderCols
+                        val shift = tileSizePx * transparentBandFraction
+                        startCol = (offset.x / tileSizePx).toInt() - playColOffset
+                        startRow = ((offset.y + shift) / tileSizePx).toInt() - playRowOffset
+                        accX = 0f; accY = 0f; fired = false
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        if (fired) return@detectDragGestures
+                        accX += dragAmount.x
+                        accY += dragAmount.y
+                        val threshold = size.width.toFloat() / renderCols * 0.5f
+                        if (abs(accX) >= threshold || abs(accY) >= threshold) {
+                            val horizontal = abs(accX) >= abs(accY)
+                            if (horizontal && startRow in 0 until rows) {
+                                onWardenSlide(Axis.ROW, startRow, if (accX > 0) 1 else -1)
+                                fired = true
+                            } else if (!horizontal && startCol in 0 until columns) {
+                                onWardenSlide(Axis.COLUMN, startCol, if (accY > 0) 1 else -1)
+                                fired = true
+                            }
                         }
                     },
                 )
@@ -409,6 +451,24 @@ fun BoardCanvas(
                         style = Stroke(width = attackBorderPx),
                     )
                 }
+            }
+
+            // 6) Warden mode frame: a gold border around the playable area
+            // signals that drags will slide tile lines instead of selecting.
+            if (wardenMode) {
+                val w = borderPx * 2.5f
+                drawRect(
+                    color = SELECTION_BORDER_COLOR.copy(alpha = 0.85f),
+                    topLeft = Offset(
+                        playColOffset * tileSizePx + w / 2f,
+                        playRowOffset * tileSizePx + w / 2f,
+                    ),
+                    size = Size(
+                        columns * tileSizePx - w,
+                        rows * tileSizePx - w,
+                    ),
+                    style = Stroke(width = w),
+                )
             }
             } // close translate(top = -canvasShift)
         }
