@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -183,6 +184,7 @@ fun GameScreen(
                 isAnimating = isAnimating,
                 wardenMode = wardenMode,
                 wardenUsed = session.wardenUsedThisRound,
+                heldTile = session.wardenSpare,
                 onToggleWarden = { wardenMode = !wardenMode },
                 onNext = { scope.launch { session.nextRound() } },
                 onMenu = onBackToMenu,
@@ -362,6 +364,7 @@ private fun Controls(
     isAnimating: Boolean,
     wardenMode: Boolean,
     wardenUsed: Boolean,
+    heldTile: com.tilewarden.core.TileType,
     onToggleWarden: () -> Unit,
     onNext: () -> Unit,
     onMenu: () -> Unit,
@@ -376,11 +379,12 @@ private fun Controls(
             ) { Text("Show summary") }
         }
         if (!isOver) {
+            HeldTileChip(heldTile)
             if (wardenMode) {
                 Button(
                     onClick = onToggleWarden,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Drag a row or column to slide it — tap to cancel") }
+                ) { Text("Drag a line to push your tile in — tap to cancel") }
             } else {
                 OutlinedButton(
                     onClick = onToggleWarden,
@@ -407,6 +411,38 @@ private fun Controls(
             ) {
                 Text("Menu")
             }
+        }
+    }
+}
+
+/** Small chip showing the tile the Warden currently holds in hand. The
+ *  next slide pushes this into the chosen line; a pit drops enemies. */
+@Composable
+private fun HeldTileChip(tile: com.tilewarden.core.TileType) {
+    val isPit = tile == com.tilewarden.core.TileType.PIT
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "Warden's tile:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(
+                    if (isPit) Color(0xFF26201B) else MaterialTheme.colorScheme.surfaceVariant
+                )
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        ) {
+            Text(
+                text = if (isPit) "▢ Pit (drops foes)" else "▦ Floor",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isPit) Color(0xFFF0C969) else MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }

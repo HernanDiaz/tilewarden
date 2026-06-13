@@ -123,6 +123,12 @@ class GameSession(
     var wardenUsedThisRound: Boolean by mutableStateOf(false)
         private set
 
+    /** The tile the Warden currently holds and will push in on the next
+     *  slide. Starts as a pit (immediate kill agency); cycles as the far
+     *  edge of each slide ejects its terrain into the hand. */
+    var wardenSpare: com.tilewarden.core.TileType by mutableStateOf(com.tilewarden.core.TileType.PIT)
+        private set
+
     /** Initial snapshot of every character that started the game.
      * Used by the end-of-game summary to compute the MVP even after death. */
     val initialPieces: SnapshotStateList<PieceRender> = mutableStateListOf()
@@ -216,6 +222,7 @@ class GameSession(
         touchedThisRound.clear()
         actedThisRound.clear()
         wardenUsedThisRound = false
+        wardenSpare = com.tilewarden.core.TileType.PIT
         facingLeft.clear()
         attacksByName.clear()
         damageByName.clear()
@@ -355,7 +362,9 @@ class GameSession(
      */
     suspend fun wardenSlide(axis: Axis, index: Int, delta: Int): Boolean {
         if (isAnimating || isOver || wardenUsedThisRound) return false
-        if (!game.board.slideLine(axis, index, delta)) return false
+        val ejected = game.board.slideLineWithSpare(axis, index, delta, wardenSpare)
+            ?: return false
+        wardenSpare = ejected   // the far tile drops into the Warden's hand
         wardenUsedThisRound = true
 
         // Mirror every character's new board position into the visible
@@ -377,6 +386,8 @@ class GameSession(
         // Selection survives but its legal moves just changed under it;
         // deselect to avoid stale highlights.
         selectedHero = null
+        // Injected / ejected tiles changed the terrain — refresh the pits.
+        refreshFurniture()
 
         val axisName = if (axis == Axis.ROW) "row" else "column"
         val dirName = when {

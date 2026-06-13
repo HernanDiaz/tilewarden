@@ -58,6 +58,17 @@ class Board(val rows: Int, val columns: Int) {
         pitSet.remove(location)
     }
 
+    /** Terrain type of [location] (out-of-bounds counts as FLOOR). */
+    fun terrainAt(location: XYLocation): TileType =
+        if (location in pitSet) TileType.PIT else TileType.FLOOR
+
+    /** Force the terrain at [location] — no occupancy/duplication checks.
+     *  Used by the spare-tile slide, which deliberately drops a pit under
+     *  whatever wrapped onto the entry edge. */
+    private fun forceTerrain(location: XYLocation, type: TileType) {
+        if (type == TileType.PIT) pitSet.add(location) else pitSet.remove(location)
+    }
+
     /**
      * Remove a piece from the board. No-op if the piece was already off-board.
      */
@@ -136,6 +147,42 @@ class Board(val rows: Int, val columns: Int) {
             squareAt(destination).piece = piece
         }
         return true
+    }
+
+    /**
+     * The Warden's push: like [slideLine], but the Warden injects the held
+     * tile [spareIn] at the entry edge and the terrain at the far edge is
+     * ejected into the Warden's hand (the returned value, the new spare).
+     *
+     * Pieces ride and wrap exactly as in [slideLine]; **interior terrain is
+     * untouched**, so pre-existing pits keep killing flexibly (a piece that
+     * rides onto one still falls). Only the two edge cells exchange terrain
+     * with the hand. The piece that wraps from the far edge lands on the
+     * entry edge — so injecting a [TileType.PIT] there drops it onto that
+     * wrapped piece (resolve the fall afterwards).
+     *
+     * @param delta +1 means the entry edge is index 0 (push from the low
+     *   side, everything shifts toward the high side); -1 mirrors it.
+     * @return the ejected terrain (new spare), or `null` if the arguments
+     *   are invalid (board untouched).
+     */
+    fun slideLineWithSpare(axis: Axis, index: Int, delta: Int, spareIn: TileType): TileType? {
+        if (delta != 1 && delta != -1) return null
+        val lineLength = when (axis) {
+            Axis.ROW    -> { if (index !in 0 until rows) return null; columns }
+            Axis.COLUMN -> { if (index !in 0 until columns) return null; rows }
+        }
+        fun locAt(i: Int): XYLocation =
+            if (axis == Axis.ROW) XYLocation(index, i) else XYLocation(i, index)
+
+        val entry = if (delta > 0) 0 else lineLength - 1
+        val far   = if (delta > 0) lineLength - 1 else 0
+
+        val ejected = terrainAt(locAt(far))
+        forceTerrain(locAt(far), TileType.FLOOR)   // far tile leaves to hand
+        slideLine(axis, index, delta)              // pieces & crates ride + wrap
+        forceTerrain(locAt(entry), spareIn)        // held tile drops at the entry edge
+        return ejected
     }
 
     /** Multi-line text view of the board. Empty squares render as `-`. */
